@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, Button, Input, Select, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -22,8 +22,13 @@ export default function APIPageClient({ machineId }) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyLimit, setNewKeyLimit] = useState("");
+  const [newKeyWindow, setNewKeyWindow] = useState("monthly");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [editLimitKey, setEditLimitKey] = useState(null);
+  const [editLimitValue, setEditLimitValue] = useState("");
+  const [editLimitWindow, setEditLimitWindow] = useState("monthly");
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -614,7 +619,11 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({
+          name: newKeyName,
+          tokenLimit: Math.max(0, parseInt(newKeyLimit, 10) || 0),
+          limitWindow: newKeyWindow,
+        }),
       });
       const data = await res.json();
 
@@ -622,10 +631,32 @@ export default function APIPageClient({ machineId }) {
         setCreatedKey(data.key);
         await fetchData();
         setNewKeyName("");
+        setNewKeyLimit("");
+        setNewKeyWindow("monthly");
         setShowAddModal(false);
       }
     } catch (error) {
       console.log("Error creating key:", error);
+    }
+  };
+
+  const handleSaveLimit = async () => {
+    if (!editLimitKey) return;
+    try {
+      const res = await fetch(`/api/keys/${editLimitKey.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokenLimit: Math.max(0, parseInt(editLimitValue, 10) || 0),
+          limitWindow: editLimitWindow,
+        }),
+      });
+      if (res.ok) {
+        setEditLimitKey(null);
+        await fetchData();
+      }
+    } catch (error) {
+      console.log("Error saving limit:", error);
     }
   };
 
@@ -1024,11 +1055,44 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  {key.tokenLimit > 0 ? (
+                    <div className="mt-1.5">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="material-symbols-outlined text-[13px] text-text-muted">data_usage</span>
+                        <span className={(key.used ?? 0) >= key.tokenLimit ? "text-red-500 font-medium" : "text-text-muted"}>
+                          {(key.used ?? 0).toLocaleString()} / {key.tokenLimit.toLocaleString()} tokens
+                        </span>
+                        <span className="text-text-muted">· {key.limitWindow}</span>
+                        {(key.used ?? 0) >= key.tokenLimit && (
+                          <span className="text-red-500 font-medium">· limit reached</span>
+                        )}
+                      </div>
+                      <div className="mt-1 h-1 w-40 max-w-full rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${(key.used ?? 0) >= key.tokenLimit ? "bg-red-500" : "bg-brand-500"}`}
+                          style={{ width: `${Math.min(100, ((key.used ?? 0) / key.tokenLimit) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-muted mt-1">No token limit</p>
+                  )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setEditLimitKey(key);
+                      setEditLimitValue(key.tokenLimit > 0 ? String(key.tokenLimit) : "");
+                      setEditLimitWindow(key.limitWindow || "monthly");
+                    }}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Edit token limit"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">tune</span>
+                  </button>
                   <Toggle
                     size="sm"
                     checked={key.isActive ?? true}
@@ -1068,6 +1132,8 @@ export default function APIPageClient({ machineId }) {
         onClose={() => {
           setShowAddModal(false);
           setNewKeyName("");
+          setNewKeyLimit("");
+          setNewKeyWindow("monthly");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1077,6 +1143,26 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <Input
+            label="Token Limit (optional)"
+            type="number"
+            min="0"
+            value={newKeyLimit}
+            onChange={(e) => setNewKeyLimit(e.target.value)}
+            placeholder="0 = unlimited"
+            hint="Max total tokens (prompt + completion) this key may consume per window."
+          />
+          <Select
+            label="Limit Window"
+            value={newKeyWindow}
+            onChange={(e) => setNewKeyWindow(e.target.value)}
+            options={[
+              { value: "monthly", label: "Monthly (resets 1st of month)" },
+              { value: "daily", label: "Daily (resets at midnight)" },
+              { value: "total", label: "Total (lifetime, never resets)" },
+            ]}
+            disabled={!newKeyLimit || parseInt(newKeyLimit, 10) <= 0}
+          />
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1085,10 +1171,50 @@ export default function APIPageClient({ machineId }) {
               onClick={() => {
                 setShowAddModal(false);
                 setNewKeyName("");
+                setNewKeyLimit("");
+                setNewKeyWindow("monthly");
               }}
               variant="ghost"
               fullWidth
             >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Token Limit Modal */}
+      <Modal
+        isOpen={!!editLimitKey}
+        title={`Token Limit${editLimitKey ? ` · ${editLimitKey.name}` : ""}`}
+        onClose={() => setEditLimitKey(null)}
+      >
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Token Limit"
+            type="number"
+            min="0"
+            value={editLimitValue}
+            onChange={(e) => setEditLimitValue(e.target.value)}
+            placeholder="0 = unlimited"
+            hint="Set to 0 to remove the limit."
+          />
+          <Select
+            label="Limit Window"
+            value={editLimitWindow}
+            onChange={(e) => setEditLimitWindow(e.target.value)}
+            options={[
+              { value: "monthly", label: "Monthly (resets 1st of month)" },
+              { value: "daily", label: "Daily (resets at midnight)" },
+              { value: "total", label: "Total (lifetime, never resets)" },
+            ]}
+            disabled={!editLimitValue || parseInt(editLimitValue, 10) <= 0}
+          />
+          <div className="flex gap-2">
+            <Button onClick={handleSaveLimit} fullWidth>
+              Save
+            </Button>
+            <Button onClick={() => setEditLimitKey(null)} variant="ghost" fullWidth>
               Cancel
             </Button>
           </div>

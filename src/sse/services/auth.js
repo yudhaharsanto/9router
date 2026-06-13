@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, getApiKeyLimitStatus, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -316,4 +316,27 @@ export function extractApiKey(request) {
 export async function isValidApiKey(apiKey) {
   if (!apiKey) return false;
   return await validateApiKey(apiKey);
+}
+
+/**
+ * Check whether an API key has exceeded its configured token limit.
+ * Keys without a limit (or no key at all) are never blocked.
+ * Fails open on errors so a DB hiccup never breaks live traffic.
+ * @param {string|null} apiKey
+ * @returns {Promise<{exceeded:boolean, used:number, limit:number, window:string}>}
+ */
+export async function checkApiKeyLimit(apiKey) {
+  if (!apiKey) return { exceeded: false, used: 0, limit: 0, window: "monthly" };
+  try {
+    const status = await getApiKeyLimitStatus(apiKey);
+    return {
+      exceeded: status.exceeded,
+      used: status.used,
+      limit: status.limit,
+      window: status.window,
+    };
+  } catch (e) {
+    log.warn("AUTH", `API key limit check failed: ${e.message}`);
+    return { exceeded: false, used: 0, limit: 0, window: "monthly" };
+  }
 }

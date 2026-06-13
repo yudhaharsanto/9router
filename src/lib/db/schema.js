@@ -86,6 +86,8 @@ export const TABLES = {
       tokenLimit: "INTEGER DEFAULT 0",
       // Window the limit applies over: "total" | "daily" | "monthly".
       limitWindow: "TEXT DEFAULT 'monthly'",
+      // Manual reset marker: usage before this timestamp is not counted.
+      limitResetAt: "TEXT",
       createdAt: "TEXT NOT NULL",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],

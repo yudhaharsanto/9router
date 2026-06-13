@@ -12,7 +12,7 @@ export async function GET() {
       keys.map(async (k) => {
         let used = 0;
         if (k.tokenLimit > 0) {
-          try { used = await getApiKeyUsedTokens(k.key, k.limitWindow); } catch {}
+          try { used = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt); } catch {}
         }
         return { ...k, used };
       })

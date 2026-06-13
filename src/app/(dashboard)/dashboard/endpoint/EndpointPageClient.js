@@ -766,6 +766,22 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleResetUsage = (key) => {
+    setConfirmState({
+      title: "Reset Token Usage",
+      message: `Reset the token usage counter for "${key.name}"?\n\nThe key's used tokens will go back to 0 immediately. Usage history is preserved for analytics.`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch(`/api/keys/${key.id}/reset`, { method: "POST" });
+          if (res.ok) await fetchData();
+        } catch (error) {
+          console.log("Error resetting usage:", error);
+        }
+      },
+    });
+  };
+
   const handleDeleteKey = async (id) => {
     setConfirmState({
       title: "Delete API Key",
@@ -1267,6 +1283,15 @@ export default function APIPageClient({ machineId }) {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {key.tokenLimit > 0 && (
+                    <button
+                      onClick={() => handleResetUsage(key)}
+                      className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                      title="Reset token usage"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setEditLimitKey(key);

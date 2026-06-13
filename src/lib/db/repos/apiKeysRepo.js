@@ -17,6 +17,7 @@ function rowToKey(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     tokenLimit: Number(row.tokenLimit) || 0,
     limitWindow: normalizeWindow(row.limitWindow),
+    limitResetAt: row.limitResetAt || null,
     createdAt: row.createdAt,
   };
 }
@@ -104,15 +105,22 @@ function windowCutoffIso(window) {
 }
 
 /**
- * Sum prompt + completion tokens consumed by an API key within the given window.
+ * Sum prompt + completion tokens consumed by an API key within the given window,
+ * counting only usage at/after the manual reset marker (if any).
  * @param {string} key - the raw API key string (as stored in usageHistory.apiKey)
  * @param {"total"|"daily"|"monthly"} window
+ * @param {string|null} resetAt - ISO timestamp of last manual reset (optional)
  * @returns {Promise<number>}
  */
-export async function getApiKeyUsedTokens(key, window = "monthly") {
+export async function getApiKeyUsedTokens(key, window = "monthly", resetAt = null) {
   if (!key) return 0;
   const db = await getAdapter();
-  const cutoff = windowCutoffIso(normalizeWindow(window));
+  const windowCutoff = windowCutoffIso(normalizeWindow(window));
+
+  // Effective cutoff = the later of window-start and manual-reset marker.
+  let cutoff = windowCutoff;
+  if (resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
+
   let sql = `SELECT COALESCE(SUM(promptTokens), 0) AS p, COALESCE(SUM(completionTokens), 0) AS c FROM usageHistory WHERE apiKey = ?`;
   const params = [key];
   if (cutoff) {
@@ -126,21 +134,22 @@ export async function getApiKeyUsedTokens(key, window = "monthly") {
 /**
  * Resolve the current limit status for an API key.
  * @param {string} key - raw API key string
- * @returns {Promise<{exists:boolean, hasLimit:boolean, exceeded:boolean, limit:number, used:number, remaining:number, window:string}>}
+ * @returns {Promise<{exists:boolean, hasLimit:boolean, exceeded:boolean, limit:number, used:number, remaining:number, window:string, resetAt:string|null}>}
  */
 export async function getApiKeyLimitStatus(key) {
-  const base = { exists: false, hasLimit: false, exceeded: false, limit: 0, used: 0, remaining: 0, window: "monthly" };
+  const base = { exists: false, hasLimit: false, exceeded: false, limit: 0, used: 0, remaining: 0, window: "monthly", resetAt: null };
   if (!key) return base;
   const db = await getAdapter();
-  const row = db.get(`SELECT tokenLimit, limitWindow FROM apiKeys WHERE key = ?`, [key]);
+  const row = db.get(`SELECT tokenLimit, limitWindow, limitResetAt FROM apiKeys WHERE key = ?`, [key]);
   if (!row) return base;
 
   const limit = Number(row.tokenLimit) || 0;
   const window = normalizeWindow(row.limitWindow);
+  const resetAt = row.limitResetAt || null;
   if (limit <= 0) {
-    return { ...base, exists: true, window };
+    return { ...base, exists: true, window, resetAt };
   }
-  const used = await getApiKeyUsedTokens(key, window);
+  const used = await getApiKeyUsedTokens(key, window, resetAt);
   return {
     exists: true,
     hasLimit: true,
@@ -149,5 +158,21 @@ export async function getApiKeyLimitStatus(key) {
     used,
     remaining: Math.max(0, limit - used),
     window,
+    resetAt,
   };
+}
+
+/**
+ * Manually reset an API key's token usage counter.
+ * Non-destructive: sets a reset marker so prior usage is no longer counted,
+ * leaving usageHistory intact for analytics.
+ * @param {string} id - apiKeys.id
+ * @returns {Promise<{id:string, limitResetAt:string} | null>}
+ */
+export async function resetApiKeyLimit(id) {
+  const db = await getAdapter();
+  const now = new Date().toISOString();
+  const res = db.run(`UPDATE apiKeys SET limitResetAt = ? WHERE id = ?`, [now, id]);
+  if ((res?.changes ?? 0) === 0) return null;
+  return { id, limitResetAt: now };
 }

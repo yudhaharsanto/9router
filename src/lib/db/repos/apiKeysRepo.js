@@ -90,42 +90,74 @@ export async function validateApiKey(key) {
 }
 
 /**
- * Compute the start-of-window ISO cutoff for a limit window.
- * Returns null for "total" (no time bound).
+ * Compute the start ISO cutoff for a window or period range.
+ * Supports limit windows ("total"|"daily"|"monthly") and lookup periods
+ * ("today"|"7d"|"30d"|"all"). Returns null for unbounded ranges.
  */
-function windowCutoffIso(window) {
+function cutoffIsoFor(range) {
   const now = new Date();
-  if (window === "daily") {
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  switch (range) {
+    case "daily":
+    case "today":
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    case "monthly":
+      return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    case "7d":
+      return new Date(now.getTime() - 7 * 86400000).toISOString();
+    case "30d":
+      return new Date(now.getTime() - 30 * 86400000).toISOString();
+    case "total":
+    case "all":
+    default:
+      return null;
   }
-  if (window === "monthly") {
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+}
+
+/**
+ * Read the list of providers excluded from token counting (global setting).
+ * @returns {Promise<string[]>}
+ */
+async function getExcludedProviders() {
+  try {
+    const { getSettings } = await import("./settingsRepo.js");
+    const s = await getSettings();
+    const list = s?.tokenLimitExcludedProviders;
+    return Array.isArray(list) ? list.filter((p) => typeof p === "string" && p.trim()).map((p) => p.trim()) : [];
+  } catch {
+    return [];
   }
-  return null; // total
 }
 
 /**
  * Sum prompt + completion tokens consumed by an API key within the given window,
- * counting only usage at/after the manual reset marker (if any).
+ * counting only usage at/after the manual reset marker (if any), and excluding
+ * any providers configured to not count toward limits.
  * @param {string} key - the raw API key string (as stored in usageHistory.apiKey)
  * @param {"total"|"daily"|"monthly"} window
  * @param {string|null} resetAt - ISO timestamp of last manual reset (optional)
+ * @param {string[]|null} excludeProviders - provider ids to exclude (loaded from settings if null)
  * @returns {Promise<number>}
  */
-export async function getApiKeyUsedTokens(key, window = "monthly", resetAt = null) {
+export async function getApiKeyUsedTokens(key, window = "monthly", resetAt = null, excludeProviders = null) {
   if (!key) return 0;
   const db = await getAdapter();
-  const windowCutoff = windowCutoffIso(normalizeWindow(window));
+  const windowCutoff = cutoffIsoFor(window);
 
   // Effective cutoff = the later of window-start and manual-reset marker.
   let cutoff = windowCutoff;
   if (resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
+
+  const excluded = excludeProviders ?? (await getExcludedProviders());
 
   let sql = `SELECT COALESCE(SUM(promptTokens), 0) AS p, COALESCE(SUM(completionTokens), 0) AS c FROM usageHistory WHERE apiKey = ?`;
   const params = [key];
   if (cutoff) {
     sql += ` AND timestamp >= ?`;
     params.push(cutoff);
+  }
+  if (excluded.length) {
+    sql += ` AND (provider IS NULL OR provider NOT IN (${excluded.map(() => "?").join(",")}))`;
+    params.push(...excluded);
   }
   const row = db.get(sql, params);
   return (Number(row?.p) || 0) + (Number(row?.c) || 0);
@@ -149,7 +181,8 @@ export async function getApiKeyLimitStatus(key) {
   if (limit <= 0) {
     return { ...base, exists: true, window, resetAt };
   }
-  const used = await getApiKeyUsedTokens(key, window, resetAt);
+  const excluded = await getExcludedProviders();
+  const used = await getApiKeyUsedTokens(key, window, resetAt, excluded);
   return {
     exists: true,
     hasLimit: true,
@@ -175,4 +208,92 @@ export async function resetApiKeyLimit(id) {
   const res = db.run(`UPDATE apiKeys SET limitResetAt = ? WHERE id = ?`, [now, id]);
   if ((res?.changes ?? 0) === 0) return null;
   return { id, limitResetAt: now };
+}
+
+/**
+ * Public usage lookup by API key NAME (case-insensitive).
+ * Returns usage info for every key matching the name WITHOUT exposing the
+ * secret key string. Safe to surface on an unauthenticated page.
+ * @param {string} name
+ * @param {object} [opts]
+ * @param {string|null} [opts.period] - detail period override: "today"|"7d"|"30d"|"all". Defaults to each key's limit window.
+ * @returns {Promise<Array<object>>}
+ */
+export async function getUsageByKeyName(name, opts = {}) {
+  if (!name || !name.trim()) return [];
+  const period = opts.period || null;
+  const db = await getAdapter();
+  const rows = db.all(`SELECT * FROM apiKeys WHERE name = ? COLLATE NOCASE ORDER BY createdAt ASC`, [name.trim()]);
+  const keys = rows.map(rowToKey);
+
+  const excluded = await getExcludedProviders();
+  const out = [];
+  for (const k of keys) {
+    // Range used for the detailed breakdown + period total. Falls back to key window.
+    const detailRange = period || k.limitWindow;
+
+    const usedWindow = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt, excluded);
+    const usedTotal = await getApiKeyUsedTokens(k.key, "total", k.limitResetAt, excluded);
+    const usedPeriod = period
+      ? await getApiKeyUsedTokens(k.key, detailRange, k.limitResetAt, excluded)
+      : usedWindow;
+    const models = await getApiKeyModelBreakdown(k.key, detailRange, k.limitResetAt, excluded);
+    out.push({
+      name: k.name,
+      isActive: k.isActive,
+      tokenLimit: k.tokenLimit,
+      limitWindow: k.limitWindow,
+      limitResetAt: k.limitResetAt,
+      usedWindow,
+      usedTotal,
+      usedPeriod,
+      period: period || null,
+      detailRange,
+      remaining: k.tokenLimit > 0 ? Math.max(0, k.tokenLimit - usedWindow) : null,
+      exceeded: k.tokenLimit > 0 ? usedWindow >= k.tokenLimit : false,
+      models,
+      createdAt: k.createdAt,
+    });
+  }
+  return out;
+}
+
+/**
+ * Per-model token breakdown for an API key within a window (respecting reset + exclusions).
+ * @returns {Promise<Array<{model:string, provider:string, requests:number, promptTokens:number, completionTokens:number, totalTokens:number}>>}
+ */
+export async function getApiKeyModelBreakdown(key, window = "monthly", resetAt = null, excludeProviders = null) {
+  if (!key) return [];
+  const db = await getAdapter();
+  const windowCutoff = cutoffIsoFor(window);
+  let cutoff = windowCutoff;
+  if (resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
+
+  const excluded = excludeProviders ?? (await getExcludedProviders());
+
+  let sql = `SELECT model, provider,
+      COUNT(*) AS reqs,
+      COALESCE(SUM(promptTokens), 0) AS p,
+      COALESCE(SUM(completionTokens), 0) AS c
+    FROM usageHistory WHERE apiKey = ?`;
+  const params = [key];
+  if (cutoff) {
+    sql += ` AND timestamp >= ?`;
+    params.push(cutoff);
+  }
+  if (excluded.length) {
+    sql += ` AND (provider IS NULL OR provider NOT IN (${excluded.map(() => "?").join(",")}))`;
+    params.push(...excluded);
+  }
+  sql += ` GROUP BY model, provider ORDER BY (p + c) DESC`;
+
+  const rows = db.all(sql, params);
+  return rows.map((r) => ({
+    model: r.model || "unknown",
+    provider: r.provider || "",
+    requests: Number(r.reqs) || 0,
+    promptTokens: Number(r.p) || 0,
+    completionTokens: Number(r.c) || 0,
+    totalTokens: (Number(r.p) || 0) + (Number(r.c) || 0),
+  }));
 }

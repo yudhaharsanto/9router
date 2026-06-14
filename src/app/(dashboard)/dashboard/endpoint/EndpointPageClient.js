@@ -5,6 +5,13 @@ import PropTypes from "prop-types";
 import { Card, Button, Input, Select, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
+import { AI_PROVIDERS } from "@/shared/constants/providers";
+
+// Static base options for the "excluded providers" picker, sorted by name.
+// Custom compatible nodes are merged in at runtime (see providerOptions).
+const BASE_PROVIDER_OPTIONS = Object.values(AI_PROVIDERS)
+  .map((p) => ({ id: p.id, name: p.name || p.id, sub: p.id }))
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 // Locales that unlock wenyan (classical Chinese) caveman levels
 const WENYAN_LOCALES = ["zh-CN", "zh-TW"];
@@ -82,6 +89,26 @@ export default function APIPageClient({ machineId }) {
   const [cavemanEnabled, setCavemanEnabled] = useState(false);
   const [cavemanLevel, setCavemanLevel] = useState("full");
   const [locale, setLocale] = useState("en");
+
+  // Token-limit related settings
+  const [usageLookupToken, setUsageLookupToken] = useState("");
+  const [excludedProviders, setExcludedProviders] = useState([]);
+  const [customNodes, setCustomNodes] = useState([]);
+  const [provDropdownOpen, setProvDropdownOpen] = useState(false);
+  const [provSearch, setProvSearch] = useState("");
+  const [savingLimitSettings, setSavingLimitSettings] = useState(false);
+  const [limitSettingsSaved, setLimitSettingsSaved] = useState(false);
+
+  // Combined provider options: known providers + custom compatible nodes.
+  const providerOptions = [
+    ...BASE_PROVIDER_OPTIONS,
+    ...customNodes.map((n) => ({
+      id: n.id,
+      name: n.name || n.prefix || n.id,
+      sub: n.prefix ? `custom · ${n.prefix}` : "custom",
+      custom: true,
+    })),
+  ];
 
   // Cloudflare Tunnel state
   const [tunnelChecking, setTunnelChecking] = useState(true);
@@ -267,15 +294,26 @@ export default function APIPageClient({ machineId }) {
   const loadSettings = async () => {
     setTunnelChecking(true);
     try {
-      const [settingsRes, statusRes] = await Promise.all([
+      const [settingsRes, statusRes, nodesRes] = await Promise.all([
         fetch("/api/settings"),
-        fetch("/api/tunnel/status", { cache: "no-store" })
+        fetch("/api/tunnel/status", { cache: "no-store" }),
+        fetch("/api/provider-nodes", { cache: "no-store" }),
       ]);
+      if (nodesRes?.ok) {
+        try {
+          const nd = await nodesRes.json();
+          setCustomNodes(Array.isArray(nd.nodes) ? nd.nodes : []);
+        } catch {}
+      }
       if (settingsRes.ok) {
         const data = await settingsRes.json();
         setRequireApiKey(data.requireApiKey || false);
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
+        setUsageLookupToken(data.usageLookupToken || "");
+        setExcludedProviders(
+          Array.isArray(data.tokenLimitExcludedProviders) ? data.tokenLimitExcludedProviders : []
+        );
         setTunnelDashboardAccess(data.tunnelDashboardAccess || false);
         setRtkEnabledState(data.rtkEnabled !== false);
         setCavemanEnabled(!!data.cavemanEnabled);
@@ -782,6 +820,54 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
+  const toggleExcludedProvider = (id) => {
+    setExcludedProviders((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
+    );
+  };
+
+  const refreshCustomNodes = async () => {
+    try {
+      const res = await fetch("/api/provider-nodes", { cache: "no-store" });
+      if (res.ok) {
+        const nd = await res.json();
+        setCustomNodes(Array.isArray(nd.nodes) ? nd.nodes : []);
+      }
+    } catch {
+      /* keep existing list on failure */
+    }
+  };
+
+  const openProviderPicker = () => {
+    setProvSearch("");
+    setProvDropdownOpen(true);
+    refreshCustomNodes();
+  };
+
+  const handleSaveLimitSettings = async () => {
+    setSavingLimitSettings(true);
+    setLimitSettingsSaved(false);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usageLookupToken: usageLookupToken.trim(),
+          tokenLimitExcludedProviders: excludedProviders,
+        }),
+      });
+      if (res.ok) {
+        setLimitSettingsSaved(true);
+        await fetchData();
+        setTimeout(() => setLimitSettingsSaved(false), 2500);
+      }
+    } catch (error) {
+      console.log("Error saving limit settings:", error);
+    } finally {
+      setSavingLimitSettings(false);
+    }
+  };
+
   const handleDeleteKey = async (id) => {
     setConfirmState({
       title: "Delete API Key",
@@ -1276,7 +1362,12 @@ export default function APIPageClient({ machineId }) {
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-text-muted mt-1">No token limit</p>
+                    <p className="text-xs text-text-muted mt-1">
+                      No limit · {(key.usedWindow ?? 0).toLocaleString()} tokens used ({key.limitWindow})
+                      {(key.usedTotal ?? 0) !== (key.usedWindow ?? 0) && (
+                        <> · {(key.usedTotal ?? 0).toLocaleString()} all-time</>
+                      )}
+                    </p>
                   )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
@@ -1334,6 +1425,163 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
       </Card>
+
+      {/* Token Limit Settings */}
+      <Card className="mt-6">
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold">Token Limit Settings</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            Configure public usage lookup and providers excluded from token counting.
+          </p>
+        </div>
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Public usage-lookup token"
+            value={usageLookupToken}
+            onChange={(e) => setUsageLookupToken(e.target.value)}
+            placeholder="Leave empty to disable public lookup"
+            hint="Secret required to access the public /usage-check page. Share the link as /usage-check?token=YOUR_TOKEN"
+          />
+          {usageLookupToken.trim() && (
+            <p className="text-xs text-text-muted -mt-2 break-all">
+              Public link:{" "}
+              <code className="bg-surface-2 px-1 rounded">
+                /usage-check?token={usageLookupToken.trim()}
+              </code>
+            </p>
+          )}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-main">
+              Providers excluded from token counting
+            </label>
+            <button
+              type="button"
+              onClick={openProviderPicker}
+              className="w-full flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+            >
+              <span className={excludedProviders.length ? "text-text-main" : "text-text-muted"}>
+                {excludedProviders.length
+                  ? `${excludedProviders.length} provider${excludedProviders.length > 1 ? "s" : ""} excluded`
+                  : "Select providers to exclude"}
+              </span>
+              <span className="material-symbols-outlined text-[20px] text-text-muted">expand_more</span>
+            </button>
+
+            {excludedProviders.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {excludedProviders.map((id) => {
+                  const opt = providerOptions.find((p) => p.id === id);
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 text-xs bg-surface-2 rounded-full pl-2.5 pr-1 py-1"
+                    >
+                      {opt?.name || id}
+                      <button
+                        type="button"
+                        onClick={() => toggleExcludedProvider(id)}
+                        className="hover:text-red-500 text-text-muted"
+                        title="Remove"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">close</span>
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-text-muted">
+              Tokens from these providers are NOT counted toward API key limits or usage.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button onClick={handleSaveLimitSettings} loading={savingLimitSettings}>
+              Save settings
+            </Button>
+            {limitSettingsSaved && (
+              <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                Saved
+              </span>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* Provider exclusion picker Modal */}
+      <Modal
+        isOpen={provDropdownOpen}
+        title="Exclude providers from token counting"
+        onClose={() => setProvDropdownOpen(false)}
+      >
+        <div className="flex flex-col gap-3">
+          <Input
+            placeholder="Search providers..."
+            value={provSearch}
+            onChange={(e) => setProvSearch(e.target.value)}
+            icon="search"
+            autoFocus
+          />
+          <div className="flex items-center justify-between text-xs text-text-muted">
+            <span>{excludedProviders.length} selected</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={refreshCustomNodes}
+                className="flex items-center gap-1 hover:text-text-main"
+                title="Refresh custom providers"
+              >
+                <span className="material-symbols-outlined text-[14px]">refresh</span>
+                Refresh
+              </button>
+              {excludedProviders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setExcludedProviders([])}
+                  className="hover:text-red-500"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="max-h-[50vh] overflow-auto -mx-2 px-2 flex flex-col">
+            {providerOptions.filter(
+              (p) =>
+                p.name.toLowerCase().includes(provSearch.toLowerCase()) ||
+                p.id.toLowerCase().includes(provSearch.toLowerCase())
+            ).map((p) => {
+              const checked = excludedProviders.includes(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => toggleExcludedProvider(p.id)}
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-left hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <span
+                    className={`material-symbols-outlined text-[18px] ${checked ? "text-brand-500" : "text-text-muted"}`}
+                  >
+                    {checked ? "check_box" : "check_box_outline_blank"}
+                  </span>
+                  <span className="flex-1 truncate">
+                    {p.name}
+                    {p.custom && (
+                      <span className="ml-1.5 text-[10px] uppercase tracking-wide text-brand-500/80 border border-brand-500/30 rounded px-1 py-0.5">
+                        custom
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-text-muted truncate max-w-[40%]">{p.sub || p.id}</span>
+                </button>
+              );
+            })}
+          </div>
+          <Button onClick={() => setProvDropdownOpen(false)} fullWidth>
+            Done
+          </Button>
+        </div>
+      </Modal>
 
       {/* Add Key Modal */}
       <Modal

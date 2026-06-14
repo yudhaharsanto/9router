@@ -4,17 +4,20 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/keys - List API keys (with token usage for limited keys)
+// GET /api/keys - List API keys (with token usage per window + all-time)
 export async function GET() {
   try {
     const keys = await getApiKeys();
     const withUsage = await Promise.all(
       keys.map(async (k) => {
-        let used = 0;
-        if (k.tokenLimit > 0) {
-          try { used = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt); } catch {}
-        }
-        return { ...k, used };
+        let usedWindow = 0;
+        let usedTotal = 0;
+        try {
+          usedWindow = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt);
+          usedTotal = await getApiKeyUsedTokens(k.key, "total", k.limitResetAt);
+        } catch {}
+        // `used` kept for backward compatibility (window-based)
+        return { ...k, used: usedWindow, usedWindow, usedTotal };
       })
     );
     return NextResponse.json({ keys: withUsage });

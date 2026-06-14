@@ -36,6 +36,10 @@ const DEFAULT_SETTINGS = {
   rtkEnabled: true,
   cavemanEnabled: false,
   cavemanLevel: "full",
+  // Public usage lookup (/usage-check). Empty = feature disabled.
+  usageLookupToken: "",
+  // Providers whose tokens are NOT counted toward API key limits/usage.
+  tokenLimitExcludedProviders: [],
 };
 
 async function readRaw() {

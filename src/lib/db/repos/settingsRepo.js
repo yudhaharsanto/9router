@@ -41,12 +41,16 @@ const DEFAULT_SETTINGS = {
   headroomCompressUserMessages: false,
   cavemanEnabled: false,
   cavemanLevel: "full",
-  ponytailEnabled: false,
+ponytailEnabled: false,
   ponytailLevel: "full",
   pxpipeEnabled: false,
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  // Public usage lookup (/usage-check). Empty = feature disabled.
+  usageLookupToken: "",
+  // Providers whose tokens are NOT counted toward API key limits/usage.
+  tokenLimitExcludedProviders: [],
 };
 
 async function readRaw() {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getUsageByKeyName, getSettings, getModelAliases } from "@/lib/localDb";
+import { getUsageByKeyName, getSettings, getModelAliases, getProviderNodes } from "@/lib/localDb";
+import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 
 export const dynamic = "force-dynamic";
@@ -53,9 +54,24 @@ export async function POST(request) {
     const results = await getUsageByKeyName(name, { period, includeKey: true });
     let aliases = {};
     try { aliases = await getModelAliases(); } catch {}
-    const excludedProviders = Array.isArray(settings.tokenLimitExcludedProviders)
+
+    // Resolve excluded provider ids to friendly names (custom node name / known provider name).
+    const excludedRaw = Array.isArray(settings.tokenLimitExcludedProviders)
       ? settings.tokenLimitExcludedProviders
       : [];
+    let excludedProviders = excludedRaw;
+    try {
+      const nodes = await getProviderNodes();
+      const nodeMap = {};
+      for (const n of nodes) if (n.id) nodeMap[n.id] = n.name || n.prefix || n.id;
+      excludedProviders = excludedRaw.map((id) => ({
+        id,
+        name: AI_PROVIDERS[id]?.name || nodeMap[id] || id,
+      }));
+    } catch {
+      excludedProviders = excludedRaw.map((id) => ({ id, name: AI_PROVIDERS[id]?.name || id }));
+    }
+
     return NextResponse.json({ name: name.trim(), period, count: results.length, results, aliases, excludedProviders });
   } catch (error) {
     console.log("Error looking up key usage:", error);

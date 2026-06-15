@@ -211,11 +211,35 @@ export default function UsageCheckPage() {
   );
 }
 
+function copyText(value) {
+  // navigator.clipboard only works in secure contexts (HTTPS/localhost).
+  // Fall back to a temporary textarea + execCommand for plain HTTP access.
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(value);
+    }
+  } catch {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.setAttribute("readonly", "");
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  } catch (e) {
+    return Promise.reject(e);
+  }
+}
+
 function CopyBtn({ value, title = "Copy" }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {}
@@ -414,7 +438,7 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
           )}
           {excludedProviders.length > 0 && (
             <p className="text-text-muted mt-0.5">
-              Not counted (excluded): {excludedProviders.join(", ")}
+              Not counted (excluded): {excludedProviders.map((e) => (typeof e === "string" ? e : e.name)).join(", ")}
             </p>
           )}
         </div>
@@ -526,7 +550,7 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
               className="flex-1"
             />
             {availEntries.length > 0 && (
-              <Button size="sm" variant="ghost" icon="content_copy" onClick={() => navigator.clipboard?.writeText(copyAllValue)}>
+              <Button size="sm" variant="ghost" icon="content_copy" onClick={() => copyText(copyAllValue)}>
                 Copy all
               </Button>
             )}

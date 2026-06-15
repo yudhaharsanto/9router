@@ -7,6 +7,16 @@ function normalizeWindow(w) {
   return VALID_WINDOWS.includes(w) ? w : "monthly";
 }
 
+function parseAllowedModels(raw) {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((m) => typeof m === "string" && m.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -17,7 +27,9 @@ function rowToKey(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     tokenLimit: Number(row.tokenLimit) || 0,
     limitWindow: normalizeWindow(row.limitWindow),
+    rpmLimit: Number(row.rpmLimit) || 0,
     limitResetAt: row.limitResetAt || null,
+    allowedModels: parseAllowedModels(row.allowedModels),
     createdAt: row.createdAt,
   };
 }
@@ -41,6 +53,10 @@ export async function createApiKey(name, machineId, options = {}) {
   const result = generateApiKeyWithMachine(machineId);
   const tokenLimit = Math.max(0, Number(options.tokenLimit) || 0);
   const limitWindow = normalizeWindow(options.limitWindow);
+  const rpmLimit = Math.max(0, Number(options.rpmLimit) || 0);
+  const allowedModels = Array.isArray(options.allowedModels)
+    ? options.allowedModels.filter((m) => typeof m === "string" && m.trim())
+    : [];
   const apiKey = {
     id: uuidv4(),
     name,
@@ -49,11 +65,13 @@ export async function createApiKey(name, machineId, options = {}) {
     isActive: true,
     tokenLimit,
     limitWindow,
+    rpmLimit,
+    allowedModels,
     createdAt: new Date().toISOString(),
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, tokenLimit, limitWindow, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, tokenLimit, limitWindow, apiKey.createdAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, tokenLimit, limitWindow, rpmLimit, allowedModels, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, tokenLimit, limitWindow, rpmLimit, JSON.stringify(allowedModels), apiKey.createdAt]
   );
   return apiKey;
 }
@@ -67,9 +85,13 @@ export async function updateApiKey(id, data) {
     const merged = { ...rowToKey(row), ...data };
     merged.tokenLimit = Math.max(0, Number(merged.tokenLimit) || 0);
     merged.limitWindow = normalizeWindow(merged.limitWindow);
+    merged.rpmLimit = Math.max(0, Number(merged.rpmLimit) || 0);
+    merged.allowedModels = Array.isArray(merged.allowedModels)
+      ? merged.allowedModels.filter((m) => typeof m === "string" && m.trim())
+      : [];
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, tokenLimit = ?, limitWindow = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.tokenLimit, merged.limitWindow, id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, tokenLimit = ?, limitWindow = ?, rpmLimit = ?, allowedModels = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.tokenLimit, merged.limitWindow, merged.rpmLimit, JSON.stringify(merged.allowedModels), id]
     );
     result = merged;
   });
@@ -136,16 +158,18 @@ async function getExcludedProviders() {
  * @param {"total"|"daily"|"monthly"} window
  * @param {string|null} resetAt - ISO timestamp of last manual reset (optional)
  * @param {string[]|null} excludeProviders - provider ids to exclude (loaded from settings if null)
+ * @param {boolean} ignoreReset - when true, ignore the manual reset marker (show real usage)
  * @returns {Promise<number>}
  */
-export async function getApiKeyUsedTokens(key, window = "monthly", resetAt = null, excludeProviders = null) {
+export async function getApiKeyUsedTokens(key, window = "monthly", resetAt = null, excludeProviders = null, ignoreReset = false) {
   if (!key) return 0;
   const db = await getAdapter();
   const windowCutoff = cutoffIsoFor(window);
 
   // Effective cutoff = the later of window-start and manual-reset marker.
+  // When ignoreReset is set, the reset marker is not applied (true window usage).
   let cutoff = windowCutoff;
-  if (resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
+  if (!ignoreReset && resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
 
   const excluded = excludeProviders ?? (await getExcludedProviders());
 
@@ -222,6 +246,7 @@ export async function resetApiKeyLimit(id) {
 export async function getUsageByKeyName(name, opts = {}) {
   if (!name || !name.trim()) return [];
   const period = opts.period || null;
+  const includeKey = opts.includeKey === true;
   const db = await getAdapter();
   const rows = db.all(`SELECT * FROM apiKeys WHERE name = ? COLLATE NOCASE ORDER BY createdAt ASC`, [name.trim()]);
   const keys = rows.map(rowToKey);
@@ -232,19 +257,25 @@ export async function getUsageByKeyName(name, opts = {}) {
     // Range used for the detailed breakdown + period total. Falls back to key window.
     const detailRange = period || k.limitWindow;
 
+    // Limit counter: respects the manual reset marker (this is what enforcement uses).
     const usedWindow = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt, excluded);
-    const usedTotal = await getApiKeyUsedTokens(k.key, "total", k.limitResetAt, excluded);
-    const usedPeriod = period
-      ? await getApiKeyUsedTokens(k.key, detailRange, k.limitResetAt, excluded)
-      : usedWindow;
-    const models = await getApiKeyModelBreakdown(k.key, detailRange, k.limitResetAt, excluded);
+
+    // Display figures: ignore the reset marker so real usage is always visible.
+    const usedWindowActual = await getApiKeyUsedTokens(k.key, k.limitWindow, null, excluded, true);
+    const usedTotal = await getApiKeyUsedTokens(k.key, "total", null, excluded, true);
+    const usedPeriod = await getApiKeyUsedTokens(k.key, detailRange, null, excluded, true);
+    const models = await getApiKeyModelBreakdown(k.key, detailRange, null, excluded, true);
+
     out.push({
       name: k.name,
       isActive: k.isActive,
+      ...(includeKey ? { key: k.key } : {}),
+      allowedModels: k.allowedModels || [],
       tokenLimit: k.tokenLimit,
       limitWindow: k.limitWindow,
       limitResetAt: k.limitResetAt,
       usedWindow,
+      usedWindowActual,
       usedTotal,
       usedPeriod,
       period: period || null,
@@ -259,15 +290,42 @@ export async function getUsageByKeyName(name, opts = {}) {
 }
 
 /**
+ * Get the allowed model list for an API key (by raw key string).
+ * Empty array = no restriction (all models allowed).
+ * @param {string} key
+ * @returns {Promise<string[]>}
+ */
+export async function getApiKeyAllowedModels(key) {
+  if (!key) return [];
+  const db = await getAdapter();
+  const row = db.get(`SELECT allowedModels FROM apiKeys WHERE key = ?`, [key]);
+  if (!row) return [];
+  return parseAllowedModels(row.allowedModels);
+}
+
+/**
+ * Get the requests-per-minute limit for an API key (by raw key string).
+ * 0 = unlimited.
+ * @param {string} key
+ * @returns {Promise<number>}
+ */
+export async function getApiKeyRpmLimit(key) {
+  if (!key) return 0;
+  const db = await getAdapter();
+  const row = db.get(`SELECT rpmLimit FROM apiKeys WHERE key = ?`, [key]);
+  return Number(row?.rpmLimit) || 0;
+}
+
+/**
  * Per-model token breakdown for an API key within a window (respecting reset + exclusions).
  * @returns {Promise<Array<{model:string, provider:string, requests:number, promptTokens:number, completionTokens:number, totalTokens:number}>>}
  */
-export async function getApiKeyModelBreakdown(key, window = "monthly", resetAt = null, excludeProviders = null) {
+export async function getApiKeyModelBreakdown(key, window = "monthly", resetAt = null, excludeProviders = null, ignoreReset = false) {
   if (!key) return [];
   const db = await getAdapter();
   const windowCutoff = cutoffIsoFor(window);
   let cutoff = windowCutoff;
-  if (resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
+  if (!ignoreReset && resetAt && (!cutoff || resetAt > cutoff)) cutoff = resetAt;
 
   const excluded = excludeProviders ?? (await getExcludedProviders());
 

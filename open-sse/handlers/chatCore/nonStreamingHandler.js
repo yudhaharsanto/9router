@@ -1,13 +1,38 @@
 import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
-import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
+import { addBufferToUsage, filterUsageForFormat, estimateUsage, hasValidUsage } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
+
+/**
+ * Best-effort length of the assistant's output text across provider formats,
+ * used to estimate completion tokens when the provider omits usage metadata.
+ */
+function extractOutputTextLength(responseBody) {
+  if (!responseBody || typeof responseBody !== "object") return 0;
+  try {
+    // OpenAI chat completions
+    const choice = responseBody.choices?.[0];
+    const c = choice?.message?.content ?? choice?.text;
+    if (typeof c === "string") return c.length;
+    if (Array.isArray(c)) return c.map((p) => p?.text || "").join("").length;
+
+    // Claude / Anthropic messages
+    if (Array.isArray(responseBody.content)) {
+      return responseBody.content.map((p) => p?.text || "").join("").length;
+    }
+
+    // Gemini / Vertex
+    const parts = responseBody.candidates?.[0]?.content?.parts;
+    if (Array.isArray(parts)) return parts.map((p) => p?.text || "").join("").length;
+  } catch { /* ignore */ }
+  return 0;
+}
 
 /**
  * Translate non-streaming response body from provider format → OpenAI format.
@@ -162,8 +187,15 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   responseBody = decloakToolNames(responseBody, toolNameMap);
 
   const usage = extractUsageFromResponse(responseBody);
-  appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
+  // Fallback: estimate tokens when the provider omits usage (common for some
+  // OpenAI/Anthropic-compatible nodes), so per-key token limits still track.
+  let usageForStats = usage;
+  if (!hasValidUsage(usageForStats)) {
+    const outLen = extractOutputTextLength(responseBody);
+    if (outLen > 0) usageForStats = estimateUsage(body, outLen, sourceFormat);
+  }
+  appendLog({ tokens: usageForStats, status: "200 OK" });
+  saveUsageStats({ provider, model, tokens: usageForStats, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
     ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat)

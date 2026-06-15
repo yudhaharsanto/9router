@@ -303,8 +303,9 @@ export function estimateUsage(body, contentLength, targetFormat = FORMATS.OPENAI
 /**
  * Log usage with cache info (green color)
  */
-export function logUsage(provider, usage, model = null, connectionId = null, apiKey = null) {
+export function logUsage(provider, usage, model = null, connectionId = null, apiKey = null, opts = {}) {
   if (!usage || typeof usage !== "object") return;
+  const { persist = true } = opts;
 
   const p = provider?.toUpperCase() || "UNKNOWN";
 
@@ -342,6 +343,10 @@ export function logUsage(provider, usage, model = null, connectionId = null, api
     cache_creation_input_tokens: cacheCreation || 0,
     reasoning_tokens: reasoning || 0
   };
-  saveRequestUsage({ model, provider, connectionId, tokens, apiKey: apiKey || undefined }).catch(() => { });
+  // persist=false when another path (onStreamComplete → saveUsageStats) already
+  // writes usageHistory for this request, to avoid double-counting tokens.
+  if (persist) {
+    saveRequestUsage({ model, provider, connectionId, tokens, apiKey: apiKey || undefined }).catch(() => { });
+  }
   appendRequestLog({ model, provider, connectionId, tokens, status: "200 OK" }).catch(() => { });
 }

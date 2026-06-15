@@ -1677,6 +1677,7 @@ export default function APIPageClient({ machineId }) {
         addedModelValues={modelSelectMode === "allowlist" ? currentSelectedModels : []}
         closeOnSelect={modelSelectMode === "aliasTarget"}
         alwaysShowCustom
+        activeOnly
         title={modelSelectMode === "aliasTarget" ? "Select target model for alias" : "Allowed Models for API Key"}
       />
 

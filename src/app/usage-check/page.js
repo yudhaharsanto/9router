@@ -201,7 +201,7 @@ export default function UsageCheckPage() {
 
             <div className="flex flex-col gap-3">
               {data.results.map((r, i) => (
-                <KeyCard key={i} r={r} origin={origin} period={period} aliases={data.aliases || {}} />
+                <KeyCard key={i} r={r} origin={origin} period={period} aliases={data.aliases || {}} excludedProviders={data.excludedProviders || []} />
               ))}
             </div>
           </>
@@ -250,7 +250,7 @@ function CodeBlock({ code, label }) {
   );
 }
 
-function KeyCard({ r, origin, period, aliases = {} }) {
+function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
   const [showKey, setShowKey] = useState(false);
   const [availModels, setAvailModels] = useState(null); // null = loading
   const [showModelsModal, setShowModelsModal] = useState(false);
@@ -403,6 +403,22 @@ function KeyCard({ r, origin, period, aliases = {} }) {
         <Stat label="Remaining" value={r.tokenLimit > 0 ? fmt(r.remaining) : "—"} />
         <Stat label="All-time" value={fmt(r.usedTotal)} />
       </div>
+
+      {(r.tokenLimit > 0 || excludedProviders.length > 0) && (
+        <div className="mb-3 text-xs">
+          {r.tokenLimit > 0 && (
+            <p className={r.exceeded ? "text-red-500" : "text-text-main"}>
+              <span className="material-symbols-outlined text-[13px] align-middle">savings</span>{" "}
+              {r.exceeded ? "No tokens remaining" : <>{fmt(r.remaining)} tokens remaining</>} ({rangeLabel})
+            </p>
+          )}
+          {excludedProviders.length > 0 && (
+            <p className="text-text-muted mt-0.5">
+              Not counted (excluded): {excludedProviders.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* API usage docs / examples */}
       <div className="border-t border-black/[0.06] dark:border-white/[0.06] pt-3 mb-3">

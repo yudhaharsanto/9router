@@ -44,6 +44,7 @@ export default function ModelSelectModal({
   addedModelValues = [],
   closeOnSelect = true,
   alwaysShowCustom = false,
+  activeOnly = false,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -269,7 +270,7 @@ const [cursorModels, setCursorModels] = useState([]);
     // Only show connected providers (including both standard and custom)
     const providerIdsToShow = new Set([
       ...activeConnectionIds, // Only connected providers
-      ...noAuthIds, // No-auth providers (kind-filtered)
+      ...(activeOnly ? [] : noAuthIds), // No-auth providers (skipped when activeOnly)
     ]);
 
     // Sort by PROVIDER_ORDER
@@ -643,6 +644,7 @@ const [cursorModels, setCursorModels] = useState([]);
     alwaysShowCustom,
     liveModels,
     cursorModels,
+    activeOnly,
   ]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)

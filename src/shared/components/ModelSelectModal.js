@@ -30,6 +30,7 @@ export default function ModelSelectModal({
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
+  alwaysShowCustom = false,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -45,6 +46,7 @@ export default function ModelSelectModal({
   const [providerNodes, setProviderNodes] = useState([]);
   const [customModels, setCustomModels] = useState([]);
   const [disabledModels, setDisabledModels] = useState({});
+  const [liveModels, setLiveModels] = useState({}); // providerId(nodeId) -> [{id,name}]
 
   const fetchCombos = async () => {
     try {
@@ -109,6 +111,37 @@ export default function ModelSelectModal({
   useEffect(() => {
     if (isOpen) fetchDisabledModels();
   }, [isOpen]);
+
+  // Fetch live models for connected compatible nodes (openai/anthropic-compatible)
+  // so the picker lists the provider's real models instead of a placeholder.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      const compatConns = activeProviders.filter(
+        (p) => isOpenAICompatibleProvider(p.provider) || isAnthropicCompatibleProvider(p.provider)
+      );
+      if (compatConns.length === 0) return;
+      const results = {};
+      await Promise.all(
+        compatConns.map(async (conn) => {
+          try {
+            const res = await fetch(`/api/providers/${conn.id}/models`, { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            const list = (data.models || [])
+              .map((m) => ({ id: m.id || m.name, name: m.name || m.id }))
+              .filter((m) => m.id);
+            if (list.length) results[conn.provider] = list;
+          } catch { /* ignore per-node failures */ }
+        })
+      );
+      if (!cancelled && Object.keys(results).length) {
+        setLiveModels((prev) => ({ ...prev, ...results }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, activeProviders]);
 
   const allProviders = useMemo(() => ({ ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...APIKEY_PROVIDERS }), []);
 
@@ -221,9 +254,24 @@ export default function ModelSelectModal({
             value: `${nodePrefix}/${fullModel.replace(`${providerId}/`, "")}`,
           }));
 
-        // Always show compatible providers that are connected, even with no aliases.
-        // When no aliases exist, show a placeholder so users know it's available.
-        const modelsToShow = nodeModels.length > 0 ? nodeModels : [{
+        // Live models fetched from the node's /models endpoint.
+        const liveNodeModels = (liveModels[providerId] || []).map((m) => ({
+          id: m.id,
+          name: m.name || m.id,
+          value: `${nodePrefix}/${m.id}`,
+        }));
+
+        // Merge live + alias-derived models, dedupe by value.
+        const seenVals = new Set();
+        const mergedNodeModels = [...liveNodeModels, ...nodeModels].filter((m) => {
+          if (seenVals.has(m.value)) return false;
+          seenVals.add(m.value);
+          return true;
+        });
+
+        // Show real models when available; otherwise a placeholder so users
+        // know the compatible provider is connected and can type a model id.
+        const modelsToShow = mergedNodeModels.length > 0 ? mergedNodeModels : [{
           id: `__placeholder__${providerId}`,
           name: `${nodePrefix}/model-id`,
           value: `${nodePrefix}/model-id`,
@@ -236,7 +284,7 @@ export default function ModelSelectModal({
           color: providerInfo.color,
           models: modelsToShow,
           isCustom: true,
-          hasModels: nodeModels.length > 0,
+          hasModels: mergedNodeModels.length > 0,
         };
       } else {
         const hardcodedModels = getModelsByProviderId(providerId);
@@ -295,6 +343,42 @@ export default function ModelSelectModal({
       }
     });
 
+    // Optional: always-on "Custom models" group (registered custom models +
+    // custom aliases), independent of which providers are connected. Used by
+    // the API-key alias picker so custom models are always selectable.
+    if (alwaysShowCustom) {
+      const existingValues = new Set();
+      Object.values(groups).forEach((g) => g.models.forEach((m) => existingValues.add(m.value)));
+
+      const customEntries = [];
+      // Registered custom models (/api/models/custom)
+      for (const m of customModels) {
+        if (kindFilter && m.type && m.type !== kindFilter) continue;
+        if (!kindFilter && m.type && m.type !== "llm") continue;
+        const value = `${m.providerAlias}/${m.id}`;
+        if (existingValues.has(value)) continue;
+        existingValues.add(value);
+        customEntries.push({ id: m.id, name: m.name || m.id, value, isCustom: true });
+      }
+      // Custom aliases (alias name → full model)
+      for (const [aliasName, fullModel] of Object.entries(modelAliases)) {
+        const value = String(fullModel);
+        if (existingValues.has(value)) continue;
+        existingValues.add(value);
+        customEntries.push({ id: aliasName, name: aliasName, value, isCustom: true });
+      }
+
+      if (customEntries.length > 0) {
+        groups.__custom__ = {
+          name: "Custom models",
+          alias: "",
+          color: "#8B5CF6",
+          models: customEntries,
+          isCustom: true,
+        };
+      }
+    }
+
     // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
     Object.entries(groups).forEach(([providerId, group]) => {
       const aliasKey = getProviderAlias(providerId);
@@ -308,7 +392,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, alwaysShowCustom, liveModels]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {

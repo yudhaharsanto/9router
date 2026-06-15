@@ -7,6 +7,8 @@ import {
   extractApiKey,
   isValidApiKey,
   checkApiKeyLimit,
+  checkApiKeyModelAllowed,
+  checkApiKeyRpm,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
 import { getSettings } from "@/lib/localDb";
@@ -90,11 +92,32 @@ export async function handleChat(request, clientRawRequest = null) {
         `Token limit exceeded for this API key: ${limit.used}/${limit.limit} tokens used (${limit.window}).`
       );
     }
+    // Enforce per-key requests-per-minute limit
+    const rpm = await checkApiKeyRpm(apiKey);
+    if (rpm.limited) {
+      log.warn("AUTH", `API key RPM limit exceeded (${rpm.rpm}/min)`);
+      return errorResponse(
+        HTTP_STATUS.RATE_LIMITED,
+        `Rate limit exceeded for this API key: max ${rpm.rpm} requests/minute. Retry in ${rpm.retryAfter}s.`
+      );
+    }
   }
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  // Enforce per-key model allow-list (if configured)
+  if (apiKey) {
+    const modelCheck = await checkApiKeyModelAllowed(apiKey, modelStr);
+    if (!modelCheck.allowed) {
+      log.warn("AUTH", `Model "${modelStr}" not allowed for this API key`);
+      return errorResponse(
+        HTTP_STATUS.FORBIDDEN,
+        `Model "${modelStr}" is not allowed for this API key.`
+      );
+    }
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Select, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import ModelSelectModal from "@/shared/components/ModelSelectModal";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
@@ -75,11 +76,27 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyLimit, setNewKeyLimit] = useState("");
   const [newKeyWindow, setNewKeyWindow] = useState("monthly");
+  const [newKeyRpm, setNewKeyRpm] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [editLimitKey, setEditLimitKey] = useState(null);
   const [editLimitValue, setEditLimitValue] = useState("");
   const [editLimitWindow, setEditLimitWindow] = useState("monthly");
+  const [editLimitRpm, setEditLimitRpm] = useState("");
+  const [editLimitModels, setEditLimitModels] = useState([]);
+
+  // Per-key model allow-list picker
+  const [newKeyModels, setNewKeyModels] = useState([]);
+  const [showModelSelect, setShowModelSelect] = useState(false);
+  const [modelSelectTarget, setModelSelectTarget] = useState("create"); // "create" | "edit"
+  const [modelSelectMode, setModelSelectMode] = useState("allowlist"); // "allowlist" | "aliasTarget"
+  const [providerConnections, setProviderConnections] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
+
+  // Inline custom-model / alias entry
+  const [customModelName, setCustomModelName] = useState("");
+  const [customModelTarget, setCustomModelTarget] = useState("");
+  const [addingCustomModel, setAddingCustomModel] = useState(false);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -92,6 +109,7 @@ export default function APIPageClient({ machineId }) {
 
   // Token-limit related settings
   const [usageLookupToken, setUsageLookupToken] = useState("");
+  const [usageLookupPassword, setUsageLookupPassword] = useState("");
   const [excludedProviders, setExcludedProviders] = useState([]);
   const [customNodes, setCustomNodes] = useState([]);
   const [provDropdownOpen, setProvDropdownOpen] = useState(false);
@@ -294,15 +312,29 @@ export default function APIPageClient({ machineId }) {
   const loadSettings = async () => {
     setTunnelChecking(true);
     try {
-      const [settingsRes, statusRes, nodesRes] = await Promise.all([
+      const [settingsRes, statusRes, nodesRes, providersRes, aliasRes] = await Promise.all([
         fetch("/api/settings"),
         fetch("/api/tunnel/status", { cache: "no-store" }),
         fetch("/api/provider-nodes", { cache: "no-store" }),
+        fetch("/api/providers", { cache: "no-store" }),
+        fetch("/api/models/alias", { cache: "no-store" }),
       ]);
       if (nodesRes?.ok) {
         try {
           const nd = await nodesRes.json();
           setCustomNodes(Array.isArray(nd.nodes) ? nd.nodes : []);
+        } catch {}
+      }
+      if (providersRes?.ok) {
+        try {
+          const pd = await providersRes.json();
+          setProviderConnections(Array.isArray(pd.connections) ? pd.connections : []);
+        } catch {}
+      }
+      if (aliasRes?.ok) {
+        try {
+          const ad = await aliasRes.json();
+          setModelAliases(ad.aliases || {});
         } catch {}
       }
       if (settingsRes.ok) {
@@ -311,6 +343,7 @@ export default function APIPageClient({ machineId }) {
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
         setUsageLookupToken(data.usageLookupToken || "");
+        setUsageLookupPassword(data.usageLookupPassword || "");
         setExcludedProviders(
           Array.isArray(data.tokenLimitExcludedProviders) ? data.tokenLimitExcludedProviders : []
         );
@@ -767,6 +800,8 @@ export default function APIPageClient({ machineId }) {
           name: newKeyName,
           tokenLimit: Math.max(0, parseInt(newKeyLimit, 10) || 0),
           limitWindow: newKeyWindow,
+          rpmLimit: Math.max(0, parseInt(newKeyRpm, 10) || 0),
+          allowedModels: newKeyModels,
         }),
       });
       const data = await res.json();
@@ -777,6 +812,8 @@ export default function APIPageClient({ machineId }) {
         setNewKeyName("");
         setNewKeyLimit("");
         setNewKeyWindow("monthly");
+        setNewKeyRpm("");
+        setNewKeyModels([]);
         setShowAddModal(false);
       }
     } catch (error) {
@@ -793,6 +830,8 @@ export default function APIPageClient({ machineId }) {
         body: JSON.stringify({
           tokenLimit: Math.max(0, parseInt(editLimitValue, 10) || 0),
           limitWindow: editLimitWindow,
+          rpmLimit: Math.max(0, parseInt(editLimitRpm, 10) || 0),
+          allowedModels: editLimitModels,
         }),
       });
       if (res.ok) {
@@ -826,6 +865,109 @@ export default function APIPageClient({ machineId }) {
     );
   };
 
+  // Per-key model allow-list helpers
+  const activeProviders = providerConnections.filter((c) => c.isActive !== false);
+  const currentSelectedModels = modelSelectTarget === "edit" ? editLimitModels : newKeyModels;
+  const openModelSelect = (target) => {
+    setModelSelectTarget(target);
+    setModelSelectMode("allowlist");
+    setShowModelSelect(true);
+  };
+  const openAliasTargetSelect = () => {
+    setModelSelectMode("aliasTarget");
+    setShowModelSelect(true);
+  };
+  const handleModelPicked = (m) => {
+    if (modelSelectMode === "aliasTarget") {
+      setCustomModelTarget(m?.value ?? m);
+      setShowModelSelect(false);
+      return;
+    }
+    addSelectedModel(m);
+  };
+  const handleModelDeselected = (m) => {
+    if (modelSelectMode === "aliasTarget") return;
+    removeSelectedModel(m);
+  };
+  const addSelectedModel = (m) => {
+    const v = m.value ?? m;
+    if (modelSelectTarget === "edit") {
+      setEditLimitModels((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    } else {
+      setNewKeyModels((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    }
+  };
+  const removeSelectedModel = (m) => {
+    const v = m?.value ?? m;
+    if (modelSelectTarget === "edit") {
+      setEditLimitModels((prev) => prev.filter((x) => x !== v));
+    } else {
+      setNewKeyModels((prev) => prev.filter((x) => x !== v));
+    }
+  };
+  const removeModelFromList = (target, v) => {
+    if (target === "edit") setEditLimitModels((prev) => prev.filter((x) => x !== v));
+    else setNewKeyModels((prev) => prev.filter((x) => x !== v));
+  };
+
+  const refreshAliases = async () => {
+    try {
+      const ad = await (await fetch("/api/models/alias", { cache: "no-store" })).json();
+      setModelAliases(ad.aliases || {});
+    } catch {}
+  };
+
+  const deleteAlias = async (aliasName) => {
+    try {
+      const res = await fetch(`/api/models/alias?alias=${encodeURIComponent(aliasName)}`, { method: "DELETE" });
+      if (res.ok) await refreshAliases();
+    } catch (error) {
+      console.log("Error deleting alias:", error);
+    }
+  };
+
+  const deleteAllAliases = async () => {
+    const names = Object.keys(modelAliases || {});
+    if (names.length === 0) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete all ${names.length} model alias(es)? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await Promise.all(
+        names.map((n) =>
+          fetch(`/api/models/alias?alias=${encodeURIComponent(n)}`, { method: "DELETE" }).catch(() => {})
+        )
+      );
+      await refreshAliases();
+    } catch (error) {
+      console.log("Error deleting all aliases:", error);
+    }
+  };
+
+  // Create a global model alias (alias name → target model).
+  const addGlobalAlias = async () => {
+    const name = customModelName.trim();
+    const mapTo = customModelTarget.trim();
+    if (!name || !mapTo) return;
+    setAddingCustomModel(true);
+    try {
+      const res = await fetch("/api/models/alias", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alias: name, model: mapTo }),
+      });
+      if (res.ok) {
+        await refreshAliases();
+        setCustomModelName("");
+        setCustomModelTarget("");
+      }
+    } catch (error) {
+      console.log("Error adding alias:", error);
+    } finally {
+      setAddingCustomModel(false);
+    }
+  };
+
   const refreshCustomNodes = async () => {
     try {
       const res = await fetch("/api/provider-nodes", { cache: "no-store" });
@@ -853,6 +995,7 @@ export default function APIPageClient({ machineId }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           usageLookupToken: usageLookupToken.trim(),
+          usageLookupPassword: usageLookupPassword,
           tokenLimitExcludedProviders: excludedProviders,
         }),
       });
@@ -1349,7 +1492,7 @@ export default function APIPageClient({ machineId }) {
                         <span className={(key.used ?? 0) >= key.tokenLimit ? "text-red-500 font-medium" : "text-text-muted"}>
                           {(key.used ?? 0).toLocaleString()} / {key.tokenLimit.toLocaleString()} tokens
                         </span>
-                        <span className="text-text-muted">· {key.limitWindow}</span>
+                        <span className="text-text-muted">· {key.limitWindow} (since reset)</span>
                         {(key.used ?? 0) >= key.tokenLimit && (
                           <span className="text-red-500 font-medium">· limit reached</span>
                         )}
@@ -1360,12 +1503,28 @@ export default function APIPageClient({ machineId }) {
                           style={{ width: `${Math.min(100, ((key.used ?? 0) / key.tokenLimit) * 100)}%` }}
                         />
                       </div>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        This {key.limitWindow}: {(key.usedWindowActual ?? key.usedWindow ?? 0).toLocaleString()} tokens · All-time: {(key.usedTotal ?? 0).toLocaleString()}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {key.rpmLimit > 0 && (
+                          <span className="text-[11px] text-text-muted">
+                            <span className="material-symbols-outlined text-[12px] align-middle">speed</span> {key.rpmLimit} req/min
+                          </span>
+                        )}
+                        {key.allowedModels?.length > 0 && (
+                          <span className="text-[11px] text-text-muted">
+                            <span className="material-symbols-outlined text-[12px] align-middle">lock</span> {key.allowedModels.length} model(s)
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <p className="text-xs text-text-muted mt-1">
-                      No limit · {(key.usedWindow ?? 0).toLocaleString()} tokens used ({key.limitWindow})
-                      {(key.usedTotal ?? 0) !== (key.usedWindow ?? 0) && (
-                        <> · {(key.usedTotal ?? 0).toLocaleString()} all-time</>
+                      No limit · This {key.limitWindow}: {(key.usedWindowActual ?? 0).toLocaleString()} tokens · {(key.usedTotal ?? 0).toLocaleString()} all-time
+                      {key.rpmLimit > 0 && <> · {key.rpmLimit} req/min</>}
+                      {key.allowedModels?.length > 0 && (
+                        <> · {key.allowedModels.length} model(s) allowed</>
                       )}
                     </p>
                   )}
@@ -1388,6 +1547,8 @@ export default function APIPageClient({ machineId }) {
                       setEditLimitKey(key);
                       setEditLimitValue(key.tokenLimit > 0 ? String(key.tokenLimit) : "");
                       setEditLimitWindow(key.limitWindow || "monthly");
+                      setEditLimitRpm(key.rpmLimit > 0 ? String(key.rpmLimit) : "");
+                      setEditLimitModels(Array.isArray(key.allowedModels) ? key.allowedModels : []);
                     }}
                     className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
                     title="Edit token limit"
@@ -1435,21 +1596,33 @@ export default function APIPageClient({ machineId }) {
           </p>
         </div>
         <div className="flex flex-col gap-4">
-          <Input
-            label="Public usage-lookup token"
-            value={usageLookupToken}
-            onChange={(e) => setUsageLookupToken(e.target.value)}
-            placeholder="Leave empty to disable public lookup"
-            hint="Secret required to access the public /usage-check page. Share the link as /usage-check?token=YOUR_TOKEN"
-          />
-          {usageLookupToken.trim() && (
-            <p className="text-xs text-text-muted -mt-2 break-all">
-              Public link:{" "}
-              <code className="bg-surface-2 px-1 rounded">
-                /usage-check?token={usageLookupToken.trim()}
-              </code>
+          <div className="rounded-[10px] bg-surface-2/60 p-3 flex flex-col gap-2">
+            <p className="text-sm font-medium">Public usage lookup</p>
+            <p className="text-xs text-text-muted">
+              Anyone can check a key&apos;s usage at{" "}
+              <code className="bg-surface-2 px-1 rounded">/usage-check</code> by entering the API key
+              name and the lookup password below. Leave the password empty to disable the page.
             </p>
-          )}
+            <Input
+              label="Usage lookup password"
+              type="text"
+              value={usageLookupPassword}
+              onChange={(e) => setUsageLookupPassword(e.target.value)}
+              placeholder="Empty = disabled"
+              hint="Separate from the admin login password. Required to open /usage-check."
+            />
+            {usageLookupPassword.trim() && (
+              <a
+                href="/usage-check"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                Open usage lookup page
+              </a>
+            )}
+          </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-main">
               Providers excluded from token counting
@@ -1505,6 +1678,98 @@ export default function APIPageClient({ machineId }) {
               </span>
             )}
           </div>
+        </div>
+      </Card>
+
+      {/* Model Aliases (global) */}
+      <Card className="mt-6">
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold">Model Aliases</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            Define a custom name that maps to a real model. The alias can be used in the API
+            (e.g. <code className="bg-surface-2 px-1 rounded">codebuddy/claude-opus-4.7-1m</code> → <code className="bg-surface-2 px-1 rounded">cc/claude-opus-4.7</code>).
+            Aliases are global and work for every key.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3">
+          <Input
+            label="Alias name"
+            value={customModelName}
+            onChange={(e) => setCustomModelName(e.target.value)}
+            placeholder="e.g. codebuddy/claude-opus-4.7-1m"
+          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-main">Maps to</label>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={openAliasTargetSelect}
+                className="flex-1 flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] hover:border-brand-500/30 transition-all"
+              >
+                <span className={customModelTarget ? "text-text-main truncate" : "text-text-muted"}>
+                  {customModelTarget || "Select target model"}
+                </span>
+                <span className="material-symbols-outlined text-[20px] text-text-muted">expand_more</span>
+              </button>
+              {customModelTarget && (
+                <button
+                  type="button"
+                  onClick={() => setCustomModelTarget("")}
+                  className="p-1.5 text-text-muted hover:text-red-500"
+                  title="Clear target"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              )}
+            </div>
+          </div>
+          <div>
+            <Button
+              size="sm"
+              onClick={addGlobalAlias}
+              loading={addingCustomModel}
+              disabled={!customModelName.trim() || !customModelTarget.trim()}
+            >
+              Add alias
+            </Button>
+          </div>
+
+          {Object.keys(modelAliases).length > 0 && (
+            <div className="border-t border-border-subtle pt-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-medium text-text-muted">
+                  Existing aliases ({Object.keys(modelAliases).length})
+                </p>
+                <button
+                  type="button"
+                  onClick={deleteAllAliases}
+                  className="text-xs text-text-muted hover:text-red-500 flex items-center gap-0.5"
+                  title="Delete all aliases"
+                >
+                  <span className="material-symbols-outlined text-[14px]">delete_sweep</span>
+                  Delete all
+                </button>
+              </div>
+              <div className="max-h-44 overflow-y-auto flex flex-col gap-1 rounded-lg border border-border-subtle p-1.5">
+                {Object.entries(modelAliases).map(([aliasName, targetModel]) => (
+                  <div key={aliasName} className="flex items-center gap-2 text-xs bg-surface-2/60 rounded px-2 py-1.5">
+                    <span className="flex-1 truncate">
+                      <code className="text-text-main">{aliasName}</code>
+                      <span className="text-text-muted"> → {String(targetModel)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteAlias(aliasName)}
+                      className="text-text-muted hover:text-red-500 shrink-0"
+                      title="Delete alias"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -1583,9 +1848,24 @@ export default function APIPageClient({ machineId }) {
         </div>
       </Modal>
 
+      {/* Per-key model allow-list / alias-target picker */}
+      <ModelSelectModal
+        isOpen={showModelSelect}
+        onClose={() => setShowModelSelect(false)}
+        onSelect={handleModelPicked}
+        onDeselect={handleModelDeselected}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        selectedModel={modelSelectMode === "aliasTarget" ? customModelTarget : undefined}
+        addedModelValues={modelSelectMode === "allowlist" ? currentSelectedModels : []}
+        closeOnSelect={modelSelectMode === "aliasTarget"}
+        alwaysShowCustom
+        title={modelSelectMode === "aliasTarget" ? "Select target model for alias" : "Allowed Models for API Key"}
+      />
+
       {/* Add Key Modal */}
       <Modal
-        isOpen={showAddModal}
+        isOpen={showAddModal && !showModelSelect}
         title="Create API Key"
         onClose={() => {
           setShowAddModal(false);
@@ -1621,6 +1901,41 @@ export default function APIPageClient({ machineId }) {
             ]}
             disabled={!newKeyLimit || parseInt(newKeyLimit, 10) <= 0}
           />
+          <Input
+            label="Rate limit (requests/minute, optional)"
+            type="number"
+            min="0"
+            value={newKeyRpm}
+            onChange={(e) => setNewKeyRpm(e.target.value)}
+            placeholder="0 = unlimited"
+            hint="Max requests per minute for this key (sliding 60s window)."
+          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-main">Allowed models (optional)</label>
+            <button
+              type="button"
+              onClick={() => openModelSelect("create")}
+              className="w-full flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+            >
+              <span className={newKeyModels.length ? "text-text-main" : "text-text-muted"}>
+                {newKeyModels.length ? `${newKeyModels.length} model(s) allowed` : "All models allowed"}
+              </span>
+              <span className="material-symbols-outlined text-[20px] text-text-muted">add</span>
+            </button>
+            {newKeyModels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {newKeyModels.map((m) => (
+                  <span key={m} className="inline-flex items-center gap-1 text-xs bg-surface-2 rounded-full pl-2.5 pr-1 py-1">
+                    {m}
+                    <button type="button" onClick={() => removeModelFromList("create", m)} className="hover:text-red-500 text-text-muted" title="Remove">
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-text-muted">Leave empty to allow all models. Otherwise only the selected models work with this key.</p>
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1631,6 +1946,8 @@ export default function APIPageClient({ machineId }) {
                 setNewKeyName("");
                 setNewKeyLimit("");
                 setNewKeyWindow("monthly");
+                setNewKeyRpm("");
+                setNewKeyModels([]);
               }}
               variant="ghost"
               fullWidth
@@ -1643,7 +1960,7 @@ export default function APIPageClient({ machineId }) {
 
       {/* Edit Token Limit Modal */}
       <Modal
-        isOpen={!!editLimitKey}
+        isOpen={!!editLimitKey && !showModelSelect}
         title={`Token Limit${editLimitKey ? ` · ${editLimitKey.name}` : ""}`}
         onClose={() => setEditLimitKey(null)}
       >
@@ -1668,6 +1985,41 @@ export default function APIPageClient({ machineId }) {
             ]}
             disabled={!editLimitValue || parseInt(editLimitValue, 10) <= 0}
           />
+          <Input
+            label="Rate limit (requests/minute)"
+            type="number"
+            min="0"
+            value={editLimitRpm}
+            onChange={(e) => setEditLimitRpm(e.target.value)}
+            placeholder="0 = unlimited"
+            hint="Set to 0 to remove the rate limit."
+          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-main">Allowed models (optional)</label>
+            <button
+              type="button"
+              onClick={() => openModelSelect("edit")}
+              className="w-full flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+            >
+              <span className={editLimitModels.length ? "text-text-main" : "text-text-muted"}>
+                {editLimitModels.length ? `${editLimitModels.length} model(s) allowed` : "All models allowed"}
+              </span>
+              <span className="material-symbols-outlined text-[20px] text-text-muted">add</span>
+            </button>
+            {editLimitModels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {editLimitModels.map((m) => (
+                  <span key={m} className="inline-flex items-center gap-1 text-xs bg-surface-2 rounded-full pl-2.5 pr-1 py-1">
+                    {m}
+                    <button type="button" onClick={() => removeModelFromList("edit", m)} className="hover:text-red-500 text-text-muted" title="Remove">
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-text-muted">Leave empty to allow all models.</p>
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleSaveLimit} fullWidth>
               Save

@@ -10,14 +10,15 @@ export async function GET() {
     const keys = await getApiKeys();
     const withUsage = await Promise.all(
       keys.map(async (k) => {
-        let usedWindow = 0;
-        let usedTotal = 0;
+        let usedWindow = 0;       // reset-aware (limit counter)
+        let usedWindowActual = 0; // ignores reset (real window usage)
+        let usedTotal = 0;        // ignores reset (real all-time)
         try {
           usedWindow = await getApiKeyUsedTokens(k.key, k.limitWindow, k.limitResetAt);
-          usedTotal = await getApiKeyUsedTokens(k.key, "total", k.limitResetAt);
+          usedWindowActual = await getApiKeyUsedTokens(k.key, k.limitWindow, null, null, true);
+          usedTotal = await getApiKeyUsedTokens(k.key, "total", null, null, true);
         } catch {}
-        // `used` kept for backward compatibility (window-based)
-        return { ...k, used: usedWindow, usedWindow, usedTotal };
+        return { ...k, used: usedWindow, usedWindow, usedWindowActual, usedTotal };
       })
     );
     return NextResponse.json({ keys: withUsage });
@@ -31,7 +32,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, tokenLimit, limitWindow } = body;
+    const { name, tokenLimit, limitWindow, rpmLimit, allowedModels } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -39,7 +40,7 @@ export async function POST(request) {
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId, { tokenLimit, limitWindow });
+    const apiKey = await createApiKey(name, machineId, { tokenLimit, limitWindow, rpmLimit, allowedModels });
 
     return NextResponse.json({
       key: apiKey.key,
@@ -48,6 +49,8 @@ export async function POST(request) {
       machineId: apiKey.machineId,
       tokenLimit: apiKey.tokenLimit,
       limitWindow: apiKey.limitWindow,
+      rpmLimit: apiKey.rpmLimit,
+      allowedModels: apiKey.allowedModels,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

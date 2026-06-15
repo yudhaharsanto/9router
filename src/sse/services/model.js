@@ -8,6 +8,27 @@ const LOCAL_PROVIDER_ALIASES = {
   "xiaomi-tokenplan": "xiaomi-tokenplan",
 };
 
+/**
+ * Map a provider-node prefix (e.g. custom "mm") to the actual node id.
+ * Returns { provider: nodeId, model } when a compatible node matches, else null.
+ */
+async function matchNodeByPrefix(prefix, model) {
+  if (!prefix) return null;
+  const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
+  const o = openaiNodes.find((node) => node.prefix === prefix);
+  if (o) return { provider: o.id, model };
+
+  const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible" });
+  const a = anthropicNodes.find((node) => node.prefix === prefix);
+  if (a) return { provider: a.id, model };
+
+  const embeddingNodes = await getProviderNodes({ type: "custom-embedding" });
+  const e = embeddingNodes.find((node) => node.prefix === prefix);
+  if (e) return { provider: e.id, model };
+
+  return null;
+}
+
 export function parseModel(modelStr) {
   const parsed = parseModelCore(modelStr);
   if (parsed?.providerAlias && LOCAL_PROVIDER_ALIASES[parsed.providerAlias]) {
@@ -31,24 +52,9 @@ export async function getModelInfo(modelStr) {
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {
-    // Always check provider-node prefix matching using original input first
-    const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
-    const matchedOpenAI = openaiNodes.find((node) => node.prefix === parsed.providerAlias);
-    if (matchedOpenAI) {
-      return { provider: matchedOpenAI.id, model: parsed.model };
-    }
-
-    const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible" });
-    const matchedAnthropic = anthropicNodes.find((node) => node.prefix === parsed.providerAlias);
-    if (matchedAnthropic) {
-      return { provider: matchedAnthropic.id, model: parsed.model };
-    }
-
-    const embeddingNodes = await getProviderNodes({ type: "custom-embedding" });
-    const matchedEmbedding = embeddingNodes.find((node) => node.prefix === parsed.providerAlias);
-    if (matchedEmbedding) {
-      return { provider: matchedEmbedding.id, model: parsed.model };
-    }
+    // Map a custom node prefix (openai/anthropic/embedding compatible) to its node id.
+    const nodeMatch = await matchNodeByPrefix(parsed.providerAlias, parsed.model);
+    if (nodeMatch) return nodeMatch;
     return {
       provider: parsed.provider,
       model: parsed.model
@@ -62,6 +68,16 @@ export async function getModelInfo(modelStr) {
     // Return null provider to signal this should be handled as combo
     // The caller (handleChat) will detect this and handle it as combo
     return { provider: null, model: parsed.model };
+  }
+
+  // Resolve the alias to its target, then map a custom node prefix if the
+  // target points at a compatible node (e.g. alias → "mm/mimo-v2.5-pro").
+  const aliases = await getModelAliases();
+  const resolved = resolveModelAliasFromMap(parsed.model, aliases);
+  if (resolved) {
+    const nodeMatch = await matchNodeByPrefix(resolved.provider, resolved.model);
+    if (nodeMatch) return nodeMatch;
+    return resolved;
   }
 
   return getModelInfoCore(modelStr, getModelAliases);

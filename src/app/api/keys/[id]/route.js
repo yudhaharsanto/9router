@@ -33,6 +33,8 @@ export async function PUT(request, { params }) {
     if (body.name !== undefined) updateData.name = body.name;
     if (body.tokenLimit !== undefined) updateData.tokenLimit = body.tokenLimit;
     if (body.limitWindow !== undefined) updateData.limitWindow = body.limitWindow;
+    if (body.rpmLimit !== undefined) updateData.rpmLimit = body.rpmLimit;
+    if (body.allowedModels !== undefined) updateData.allowedModels = body.allowedModels;
 
     const updated = await updateApiKey(id, updateData);
 

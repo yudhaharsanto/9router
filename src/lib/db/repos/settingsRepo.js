@@ -36,8 +36,9 @@ const DEFAULT_SETTINGS = {
   rtkEnabled: true,
   cavemanEnabled: false,
   cavemanLevel: "full",
-  // Public usage lookup (/usage-check). Empty = feature disabled.
+  // Public usage lookup (/usage-check). Empty password = feature disabled.
   usageLookupToken: "",
+  usageLookupPassword: "",
   // Providers whose tokens are NOT counted toward API key limits/usage.
   tokenLimitExcludedProviders: [],
 };

@@ -53,7 +53,10 @@ export async function POST(request) {
     const results = await getUsageByKeyName(name, { period, includeKey: true });
     let aliases = {};
     try { aliases = await getModelAliases(); } catch {}
-    return NextResponse.json({ name: name.trim(), period, count: results.length, results, aliases });
+    const excludedProviders = Array.isArray(settings.tokenLimitExcludedProviders)
+      ? settings.tokenLimitExcludedProviders
+      : [];
+    return NextResponse.json({ name: name.trim(), period, count: results.length, results, aliases, excludedProviders });
   } catch (error) {
     console.log("Error looking up key usage:", error);
     return NextResponse.json({ error: "Failed to look up usage" }, { status: 500 });

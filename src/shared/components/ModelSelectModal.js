@@ -459,26 +459,62 @@ const [cursorModels, setCursorModels] = useState([]);
 
         // Show real models when available; otherwise a placeholder so users
         // know the compatible provider is connected and can type a model id.
-        const modelsToShow =
-          mergedNodeModels.length > 0
-            ? mergedNodeModels
-            : [
-                {
-                  id: `__placeholder__${providerId}`,
-                  name: `${nodePrefix}/model-id`,
-                  value: `${nodePrefix}/model-id`,
-                  isPlaceholder: true,
-                },
-              ];
-
-        groups[providerId] = {
-          name: displayName,
-          alias: nodePrefix,
-          color: providerInfo.color,
-          models: modelsToShow,
-          isCustom: true,
-          hasModels: mergedNodeModels.length > 0,
-        };
+        if (mergedNodeModels.length === 0) {
+          groups[providerId] = {
+            name: displayName,
+            alias: nodePrefix,
+            color: providerInfo.color,
+            models: [
+              {
+                id: `__placeholder__${providerId}`,
+                name: `${nodePrefix}/model-id`,
+                value: `${nodePrefix}/model-id`,
+                isPlaceholder: true,
+              },
+            ],
+            isCustom: true,
+            hasModels: false,
+          };
+        } else {
+          // Sub-group by the model id prefix (segment before first "/") so
+          // aggregator nodes exposing provider-prefixed models are organized
+          // by provider (e.g. "kiro", "leonardo") instead of one giant list.
+          const byPrefix = {};
+          for (const m of mergedNodeModels) {
+            const slash = m.id.indexOf("/");
+            const sub = slash > 0 ? m.id.slice(0, slash) : "";
+            const key = sub || "__node__";
+            (byPrefix[key] ||= []).push({
+              ...m,
+              // Cleaner label inside a provider sub-group: drop the prefix.
+              name: sub ? m.id.slice(slash + 1) : m.name,
+            });
+          }
+          const subKeys = Object.keys(byPrefix);
+          const hasPrefixedGroups = subKeys.some((k) => k !== "__node__");
+          if (hasPrefixedGroups) {
+            for (const sub of subKeys) {
+              const groupKey = `${providerId}::${sub}`;
+              groups[groupKey] = {
+                name: sub === "__node__" ? displayName : sub,
+                alias: nodePrefix,
+                color: providerInfo.color,
+                models: byPrefix[sub],
+                isCustom: true,
+                hasModels: true,
+              };
+            }
+          } else {
+            groups[providerId] = {
+              name: displayName,
+              alias: nodePrefix,
+              color: providerInfo.color,
+              models: mergedNodeModels,
+              isCustom: true,
+              hasModels: true,
+            };
+          }
+        }
       } else {
         const hardcodedModels = providerId === "cursor" && cursorModels.length > 0
           ? cursorModels

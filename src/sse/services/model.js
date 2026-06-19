@@ -1,12 +1,22 @@
 // Re-export from open-sse with localDb integration
 import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
+import REGISTRY from "open-sse/providers/registry/index.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
   xmtp: "xiaomi-tokenplan",
   "xiaomi-tokenplan": "xiaomi-tokenplan",
 };
+
+// Built-in provider ids/aliases that user-defined node prefixes must not shadow
+// (e.g. `cf`, `cloudflare-ai`, `openai`, `hf`).
+const RESERVED_PROVIDER_PREFIXES = new Set(Object.keys(LOCAL_PROVIDER_ALIASES));
+for (const entry of REGISTRY) {
+  RESERVED_PROVIDER_PREFIXES.add(entry.id);
+  if (entry.alias) RESERVED_PROVIDER_PREFIXES.add(entry.alias);
+  for (const alias of entry.aliases || []) RESERVED_PROVIDER_PREFIXES.add(alias);
+}
 
 /**
  * Map a provider-node prefix (e.g. custom "mm") to the actual node id.
@@ -53,8 +63,12 @@ export async function getModelInfo(modelStr) {
 
   if (!parsed.isAlias) {
     // Map a custom node prefix (openai/anthropic/embedding compatible) to its node id.
-    const nodeMatch = await matchNodeByPrefix(parsed.providerAlias, parsed.model);
-    if (nodeMatch) return nodeMatch;
+    // Provider-node prefixes are user-defined and must not override built-in
+    // provider ids/aliases such as `cf`, `cloudflare-ai`, `openai`, or `hf`.
+    if (!RESERVED_PROVIDER_PREFIXES.has(parsed.providerAlias)) {
+      const nodeMatch = await matchNodeByPrefix(parsed.providerAlias, parsed.model);
+      if (nodeMatch) return nodeMatch;
+    }
     return {
       provider: parsed.provider,
       model: parsed.model

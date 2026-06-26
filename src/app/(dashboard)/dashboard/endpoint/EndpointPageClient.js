@@ -1684,6 +1684,32 @@ export default function APIPageClient({ machineId }) {
         title={modelSelectMode === "aliasTarget" ? "Select target model for alias" : "Allowed Models for API Key"}
       />
 
+{/* Token Saver inline controls dipindah ke /dashboard/token-saver */}
+      <Card id="rtk">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">
+                bolt
+              </span>
+              Token Saver
+            </h2>
+            <p className="text-sm text-text-muted mt-1">
+              RTK · Headroom · Caveman · Ponytail — dipindahkan ke halaman
+              khusus.
+            </p>
+          </div>
+          <a
+            href="/dashboard/token-saver"
+            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            Open Token Saver
+            <span className="material-symbols-outlined text-base">
+              arrow_forward
+            </span>
+          </a>
+        </div>
+      </Card>
       {/* Add Key Modal */}
       <Modal
         isOpen={showAddModal && !showModelSelect}

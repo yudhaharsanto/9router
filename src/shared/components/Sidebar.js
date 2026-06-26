@@ -26,6 +26,7 @@ const navItems = [
   { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
   { href: "/dashboard/automation", label: "Automation", icon: "smart_toy" },
   { href: "/dashboard/mitm", label: "MITM", icon: "security" },
+  { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
 ];
 

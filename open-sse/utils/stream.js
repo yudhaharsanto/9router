@@ -116,9 +116,14 @@ export function createSSEStream(options = {}) {
       );
     }
     if (hasValidUsage(usageToReport)) {
-      logUsage(provider, usageToReport, model, connectionId, apiKey, {
-        persist: !onStreamComplete,
-      });
+      logUsage(
+        state?.provider || provider,
+        usageToReport,
+        model,
+        connectionId,
+        apiKey,
+        { persist: !onStreamComplete },
+      );
     } else {
       appendRequestLog({
         model,
@@ -319,6 +324,9 @@ export function createSSEStream(options = {}) {
           // message_stop already signals end-of-response; stream close handles it.
           streamDoneSent = true;
           if (keepsOpenAIResponsesFormat) openAIResponsesDoneSent = true;
+          // Terminal sentinel — fire completion now; downstream may cancel
+          // right after [DONE] and skip flush().
+          fireCompleteOnce(state?.usage);
           continue;
         }
 
@@ -374,6 +382,13 @@ export function createSSEStream(options = {}) {
           controller.enqueue(sharedEncoder.encode(output));
           currentOpenAIResponsesEvent = null;
           sseEmittedCount++;
+          // Fire completion on terminal Responses event (response.completed /
+          // response.failed) — Codex clients often disconnect before flush().
+          if (
+            isOpenAIResponsesTerminalEvent(openAIResponsesEventName, parsed)
+          ) {
+            fireCompleteOnce(state?.usage);
+          }
           continue;
         }
 

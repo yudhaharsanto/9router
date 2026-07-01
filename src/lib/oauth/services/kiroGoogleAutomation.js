@@ -419,25 +419,10 @@ async function waitForFirstVisibleLocator(
 async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   if (!locator || value == null) return false;
 
-  // Focus + clear, then type with a short per-key delay. `fill()` pastes the
-  // whole string in one shot which can race with Google's form JS and cause
-  // characters to leak into the wrong field (e.g. password typed while the
-  // email field is still active). ~35ms/key is fast enough to feel instant
-  // but slow enough for the DOM to keep up.
   try {
-    await locator.click({ timeout: 5_000 });
+    await locator.fill(value, { timeout });
   } catch {
-    /* noop */
-  }
-  try {
-    await locator.fill("", { timeout: 5_000 });
-  } catch {
-    /* noop */
-  }
-  try {
-    await locator.type(value, { delay: 35, timeout });
-  } catch {
-    // fall through to fill fallback
+    // swallow; verification + fallback below will decide
   }
 
   let observed = "";
@@ -448,12 +433,24 @@ async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   }
   if (observed === value) return true;
 
-  // Fallback: framework-controlled inputs that swallow key events — use fill.
+  // Fallback for React/Vue-controlled inputs where .fill() bypasses the
+  // framework's onChange wiring and the value snaps back to empty.
   try {
-    await locator.fill(value, { timeout });
+    await locator.click({ timeout: 5_000 });
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.fill("");
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.type(value, { delay: 50, timeout });
   } catch {
     return false;
   }
+
   try {
     observed = await locator.inputValue();
   } catch {
@@ -519,28 +516,59 @@ async function handleGoogleConsent(page, reportStep) {
     /wants to access|ingin mengakses|akses ke akun google|allow/i.test(text);
   if (!looksLikeConsent) return false;
 
-  await page
+  // Fast-path: single DOM round-trip to click Allow / Continue on the OAuth
+  // consent screen. Same rationale as handleGoogleOnboarding — one evaluate
+  // is far faster than iterating 40 Playwright locators.
+  const fastClicked = await page
     .evaluate(() => {
-      const root =
-        document.scrollingElement || document.documentElement || document.body;
-      if (root) root.scrollTop = root.scrollHeight;
-      window.scrollTo(
-        0,
-        document.body?.scrollHeight ||
-          document.documentElement?.scrollHeight ||
-          0,
+      const byId = ["submit_approve_access", "confirm"];
+      for (const id of byId) {
+        const el = document.getElementById(id);
+        if (el) {
+          el.scrollIntoView({ block: "center" });
+          el.click();
+          return true;
+        }
+      }
+      const texts = ["allow", "izinkan", "continue", "lanjutkan"];
+      const candidates = document.querySelectorAll(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
       );
+      for (const el of candidates) {
+        const label = (
+          el.innerText ||
+          el.value ||
+          el.getAttribute("aria-label") ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+        if (!label) continue;
+        if (texts.some((t) => label === t || label.startsWith(t))) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+          if (el.disabled) continue;
+          el.scrollIntoView({ block: "center" });
+          el.click();
+          return true;
+        }
+      }
+      return false;
     })
-    .catch(() => null);
-  await page.waitForTimeout(300);
+    .catch(() => false);
 
+  if (fastClicked) {
+    reportStep("approving_google_consent", "Approving Google OAuth consent");
+    return true;
+  }
+
+  // Playwright fallback for shadow DOM / cross-origin frames.
   const clickedApprove = await clickFirstActionable(
     page,
     APPROVE_BUTTON_SELECTORS,
   );
   if (clickedApprove) {
     reportStep("approving_google_consent", "Approving Google OAuth consent");
-    await page.waitForTimeout(1000);
     return true;
   }
 
@@ -553,50 +581,67 @@ async function handleGoogleOnboarding(page, pageText) {
     return false;
   }
 
-  // Scroll to reveal the primary button. No post-scroll pause — button lookup
-  // below already retries via waitForFirstVisibleLocator inside clickFirstActionable.
-  await page
+  // Fast-path: single DOM round-trip that scrolls + clicks the primary action
+  // (I understand / Continue / Allow / Confirm). Google's consent screens
+  // almost always render one of these as a stable id or as button text — a
+  // single evaluate is 10-20x faster than iterating 40+ Playwright locators
+  // with per-selector isVisible/isEnabled checks.
+  const fastClicked = await page
     .evaluate(() => {
-      const root =
-        document.scrollingElement || document.documentElement || document.body;
-      if (root) root.scrollTop = root.scrollHeight;
-      window.scrollTo(
-        0,
-        document.body?.scrollHeight ||
-          document.documentElement?.scrollHeight ||
-          0,
+      const byId = ["confirm", "submit_approve_access"];
+      for (const id of byId) {
+        const el = document.getElementById(id);
+        if (el) {
+          el.scrollIntoView({ block: "center" });
+          el.click();
+          return true;
+        }
+      }
+      const texts = [
+        "i understand",
+        "saya mengerti",
+        "continue",
+        "lanjutkan",
+        "allow",
+        "izinkan",
+        "next",
+        "berikutnya",
+        "got it",
+        "ok",
+        "oke",
+        "accept",
+        "setuju",
+      ];
+      const candidates = document.querySelectorAll(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
       );
+      for (const el of candidates) {
+        const label = (
+          el.innerText ||
+          el.value ||
+          el.getAttribute("aria-label") ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+        if (!label) continue;
+        if (texts.some((t) => label === t || label.startsWith(t))) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+          if (el.disabled) continue;
+          el.scrollIntoView({ block: "center" });
+          el.click();
+          return true;
+        }
+      }
+      return false;
     })
-    .catch(() => null);
+    .catch(() => false);
+  if (fastClicked) return true;
 
-  // Workspace welcome ("Welcome to your new account" for @domain.com) has
-  // only one valid action: the primary "I understand" button. Prioritise it
-  // before the generic skip pass. No post-click waits — the outer poll loop
-  // (800ms tick) picks up the next page state immediately.
+  // Workspace welcome fallback ("Welcome to your new account" for @domain.com).
+  // Submit the ToS form directly if the primary click missed.
   if (includesAny(text, GOOGLE_WORKSPACE_WELCOME_MARKERS)) {
-    const acknowledged = await clickFirstActionable(
-      page,
-      APPROVE_BUTTON_SELECTORS,
-    );
-    if (acknowledged) return true;
-
-    const submittedFromDom = await page
-      .evaluate(() => {
-        const candidates = [
-          document.getElementById("confirm"),
-          document.querySelector('form#tos_form input[type="submit"]'),
-          document.querySelector('input[type="submit"][value="Saya mengerti"]'),
-          document.querySelector('input[type="submit"][value="I understand"]'),
-        ].filter(Boolean);
-        const btn = candidates[0];
-        if (!btn) return false;
-        btn.scrollIntoView({ block: "center" });
-        btn.click();
-        return true;
-      })
-      .catch(() => false);
-    if (submittedFromDom) return true;
-
     const formSubmitted = await page
       .evaluate(() => {
         const form = document.getElementById("tos_form");
@@ -608,8 +653,10 @@ async function handleGoogleOnboarding(page, pageText) {
     if (formSubmitted) return true;
   }
 
-  if (await clickFirstActionable(page, SKIP_BUTTON_SELECTORS)) return true;
+  // Playwright fallback in case shadow DOM / cross-origin frame hid the button
+  // from the evaluate call above.
   if (await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS)) return true;
+  if (await clickFirstActionable(page, SKIP_BUTTON_SELECTORS)) return true;
 
   return false;
 }
@@ -1282,7 +1329,6 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
   );
   if (selectedRegion) {
     reportStep("selecting_provider_region", `Selected ${serviceLabel} region`);
-    await page.waitForTimeout(700);
     return true;
   }
 
@@ -1292,7 +1338,6 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
       "filling_provider_onboarding",
       `Filled ${serviceLabel} onboarding defaults`,
     );
-    await page.waitForTimeout(500);
     return true;
   }
 
@@ -1305,7 +1350,6 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
       "continuing_provider_onboarding",
       `Continuing ${serviceLabel} onboarding`,
     );
-    await page.waitForTimeout(1000);
     return true;
   }
 
@@ -1324,7 +1368,6 @@ async function handleProviderLoginGate(page, reportStep) {
       "accepting_provider_privacy_dialog",
       "Confirmed provider privacy agreement dialog",
     );
-    await page.waitForTimeout(1000);
     return true;
   }
 
@@ -1334,7 +1377,6 @@ async function handleProviderLoginGate(page, reportStep) {
       "accepting_provider_terms",
       "Accepted provider terms for Google login",
     );
-    await page.waitForTimeout(400);
   }
 
   const clickedGoogle = await clickFirstActionable(
@@ -1343,7 +1385,6 @@ async function handleProviderLoginGate(page, reportStep) {
   );
   if (clickedGoogle) {
     reportStep("selecting_google_login", "Selecting Google login");
-    await page.waitForTimeout(1000);
 
     const confirmedDialog = await clickFirstActionable(
       page,
@@ -1354,7 +1395,6 @@ async function handleProviderLoginGate(page, reportStep) {
         "accepting_provider_privacy_dialog",
         "Confirmed provider privacy agreement dialog",
       );
-      await page.waitForTimeout(1000);
     }
 
     return true;
@@ -1497,7 +1537,6 @@ export async function runGoogleAccountAutomation({
       throw retryError;
     }
   }
-  await page.waitForTimeout(500);
 
   await handleProviderLoginGate(page, reportStep);
 

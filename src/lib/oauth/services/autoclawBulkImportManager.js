@@ -281,6 +281,44 @@ export class AutoClawBulkImportManager extends BulkImportManager {
       return;
     }
 
+    // Short-circuit: if this email already has an active AutoClaw connection,
+    // skip the browser login flow entirely. Saves 30-60s per duplicate.
+    try {
+      const { getProviderConnections } =
+        await import("../../../models/index.js");
+      const existing = await getProviderConnections({
+        provider: AUTOCLOW_PROVIDER_ID,
+        isActive: true,
+      });
+      const target = String(account.email || "").toLowerCase();
+      const match = existing.find(
+        (c) => String(c.email || c.name || "").toLowerCase() === target,
+      );
+      if (match) {
+        console.log(
+          `[autoclaw-bulk] skip login — connection already exists for ${account.email} (id=${match.id})`,
+        );
+        this.setAccountStep(
+          account,
+          "connection_exists",
+          "Connection already exists — skipping login",
+        );
+        this.finalizeAccount(account, "success", {
+          connectionId: match.id,
+          step: "connection_exists",
+          message: "Already exists — skipped bulk login",
+        });
+        account.password = undefined;
+        await this.persistJobSnapshot(job, { forcePreview: true });
+        return;
+      }
+    } catch (error) {
+      // Non-fatal: if lookup fails, fall through to normal login flow.
+      console.warn(
+        `[autoclaw-bulk] duplicate-check failed for ${account.email}: ${error.message}`,
+      );
+    }
+
     // Pass the account's proxy URL to the AutoClaw API client. AutoClaw's
     // backend validates that the IP calling /google-oauth-url matches the IP
     // that visits the returned oauth_url — the browser worker uses proxyUrl,

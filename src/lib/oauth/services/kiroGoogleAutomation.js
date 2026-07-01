@@ -553,6 +553,8 @@ async function handleGoogleOnboarding(page, pageText) {
     return false;
   }
 
+  // Scroll to reveal the primary button. No post-scroll pause — button lookup
+  // below already retries via waitForFirstVisibleLocator inside clickFirstActionable.
   await page
     .evaluate(() => {
       const root =
@@ -566,23 +568,18 @@ async function handleGoogleOnboarding(page, pageText) {
       );
     })
     .catch(() => null);
-  await page.waitForTimeout(150);
 
   // Workspace welcome ("Welcome to your new account" for @domain.com) has
-  // only one valid action: the primary "I understand" button. There is no
-  // skip option — clicking nothing leaves the worker stuck polling forever
-  // while the headless tab sits on the consent screen. Prioritise the
-  // primary action selector before the generic skip pass so we don't fall
-  // through to a non-existent "Not now" link.
+  // only one valid action: the primary "I understand" button. Prioritise it
+  // before the generic skip pass. No post-click waits — the outer poll loop
+  // (800ms tick) picks up the next page state immediately.
   if (includesAny(text, GOOGLE_WORKSPACE_WELCOME_MARKERS)) {
     const acknowledged = await clickFirstActionable(
       page,
       APPROVE_BUTTON_SELECTORS,
     );
-    if (acknowledged) {
-      await page.waitForTimeout(200);
-      return true;
-    }
+    if (acknowledged) return true;
+
     const submittedFromDom = await page
       .evaluate(() => {
         const candidates = [
@@ -598,10 +595,8 @@ async function handleGoogleOnboarding(page, pageText) {
         return true;
       })
       .catch(() => false);
-    if (submittedFromDom) {
-      await page.waitForTimeout(200);
-      return true;
-    }
+    if (submittedFromDom) return true;
+
     const formSubmitted = await page
       .evaluate(() => {
         const form = document.getElementById("tos_form");
@@ -610,26 +605,11 @@ async function handleGoogleOnboarding(page, pageText) {
         return true;
       })
       .catch(() => false);
-    if (formSubmitted) {
-      await page.waitForTimeout(200);
-      return true;
-    }
+    if (formSubmitted) return true;
   }
 
-  const clickedSkip = await clickFirstActionable(page, SKIP_BUTTON_SELECTORS);
-  if (clickedSkip) {
-    await page.waitForTimeout(200);
-    return true;
-  }
-
-  const clickedContinue = await clickFirstActionable(
-    page,
-    APPROVE_BUTTON_SELECTORS,
-  );
-  if (clickedContinue) {
-    await page.waitForTimeout(200);
-    return true;
-  }
+  if (await clickFirstActionable(page, SKIP_BUTTON_SELECTORS)) return true;
+  if (await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS)) return true;
 
   return false;
 }

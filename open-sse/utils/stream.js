@@ -319,9 +319,11 @@ export function createSSEStream(options = {}) {
             sseEmittedCount++;
           }
 
-          // [DONE] not emitted in translate mode — some clients' SSE decoders
-          // fail to parse the OpenAI sentinel on Claude-format translated streams.
-          // message_stop already signals end-of-response; stream close handles it.
+          if (keepsOpenAIResponsesFormat && !streamDoneSent) {
+            const doneOutput = "data: [DONE]\n\n";
+            reqLogger?.appendConvertedChunk?.(doneOutput);
+            controller.enqueue(sharedEncoder.encode(doneOutput));
+          }
           streamDoneSent = true;
           if (keepsOpenAIResponsesFormat) openAIResponsesDoneSent = true;
           // Terminal sentinel — fire completion now; downstream may cancel
@@ -485,7 +487,9 @@ export function createSSEStream(options = {}) {
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
           // Without it they can hang until timeout and trigger failover.
-          if (!streamDoneSent) {
+          // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
+          const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
+          if (!streamDoneSent && !isGeminiFamily) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
@@ -558,8 +562,13 @@ export function createSSEStream(options = {}) {
           openAIResponsesTerminalSeen = true;
         }
 
-        // [DONE] not emitted in translate mode — see comment above.
-        // Passthrough mode still emits it for standard OpenAI clients.
+        if (keepsOpenAIResponsesFormat && !openAIResponsesDoneSent && !streamDoneSent) {
+          const doneOutput = "data: [DONE]\n\n";
+          reqLogger?.appendConvertedChunk?.(doneOutput);
+          controller.enqueue(sharedEncoder.encode(doneOutput));
+          openAIResponsesDoneSent = true;
+          streamDoneSent = true;
+        }
 
         // Idempotent: no-op if already fired from transform() on finish chunk.
         fireCompleteOnce(state?.usage);

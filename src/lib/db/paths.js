@@ -13,6 +13,13 @@ export const LEGACY_FILES = {
 };
 export function ensureDirs() {
   for (const dir of [DATA_DIR, DB_DIR, BACKUPS_DIR]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      throw new Error(
+        `[DB] Failed to create directory '${dir}': ${e.code || e.message}. ` +
+          `Set DATA_DIR env var to a writable path (current DATA_DIR=${DATA_DIR}).`,
+      );
+    }
   }
 }

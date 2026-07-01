@@ -20,6 +20,7 @@ import { CommandCodeExecutor } from "./commandcode.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
+import { AutoClawExecutor } from "./autoclaw.js";
 import { DefaultExecutor } from "./default.js";
 
 const executors = {
@@ -50,13 +51,15 @@ const executors = {
   "mimo-free": new MimoFreeExecutor(),
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
+  autoclaw: new AutoClawExecutor(),
 };
 
 const defaultCache = new Map();
 
 export function getExecutor(provider) {
   if (executors[provider]) return executors[provider];
-  if (!defaultCache.has(provider)) defaultCache.set(provider, new DefaultExecutor(provider));
+  if (!defaultCache.has(provider))
+    defaultCache.set(provider, new DefaultExecutor(provider));
   return defaultCache.get(provider);
 }
 
@@ -88,3 +91,4 @@ export { CommandCodeExecutor } from "./commandcode.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
+export { AutoClawExecutor } from "./autoclaw.js";

@@ -2,8 +2,14 @@
  * OAuth Configuration Constants — static data lives in registry, re-exported here for consumers.
  */
 import { platform, arch } from "os";
-import { ANTIGRAVITY_OAUTH_CLIENT, GOOGLE_OAUTH_CLIENT } from "open-sse/providers/shared.js";
-import { PROVIDER_OAUTH, PROVIDERS as REGISTRY_PROVIDERS } from "open-sse/providers/index.js";
+import {
+  ANTIGRAVITY_OAUTH_CLIENT,
+  GOOGLE_OAUTH_CLIENT,
+} from "open-sse/providers/shared.js";
+import {
+  PROVIDER_OAUTH,
+  PROVIDERS as REGISTRY_PROVIDERS,
+} from "open-sse/providers/index.js";
 
 /**
  * Get the platform enum value based on the current OS.
@@ -26,7 +32,10 @@ export const CODEX_CONFIG = { ...PROVIDER_OAUTH["codex"] };
 
 // Gemini (Google) OAuth Configuration (Standard OAuth2)
 // clientId/clientSecret from GOOGLE_OAUTH_CLIENT (shared.js) — not stored in registry
-export const GEMINI_CONFIG = { ...GOOGLE_OAUTH_CLIENT, ...PROVIDER_OAUTH["gemini-cli"] };
+export const GEMINI_CONFIG = {
+  ...GOOGLE_OAUTH_CLIENT,
+  ...PROVIDER_OAUTH["gemini-cli"],
+};
 
 // Qwen OAuth Configuration (Device Code Flow with PKCE)
 export const QWEN_CONFIG = { ...PROVIDER_OAUTH["qwen"] };
@@ -47,7 +56,11 @@ export const IFLOW_CONFIG = { ...PROVIDER_OAUTH["iflow"] };
 export const ANTIGRAVITY_CONFIG = {
   ...ANTIGRAVITY_OAUTH_CLIENT,
   ...PROVIDER_OAUTH["antigravity"],
-  loadCodeAssistClientMetadata: JSON.stringify({ ideType: 9, platform: getOAuthPlatformEnum(), pluginType: 2 }),
+  loadCodeAssistClientMetadata: JSON.stringify({
+    ideType: 9,
+    platform: getOAuthPlatformEnum(),
+    pluginType: 2,
+  }),
 };
 
 /**
@@ -84,7 +97,8 @@ export const CURSOR_CONFIG = {
   ...PROVIDER_OAUTH["cursor"],
   tokenStoragePaths: {
     linux: "~/.config/Cursor/User/globalStorage/state.vscdb",
-    macos: "/Users/<user>/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+    macos:
+      "/Users/<user>/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
     windows: "%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb",
   },
 };
@@ -108,9 +122,6 @@ export const KILOCODE_CONFIG = { ...PROVIDER_OAUTH["kilocode"] };
 // Cline OAuth Configuration (Local Callback Flow via app.cline.bot)
 export const CLINE_CONFIG = { ...PROVIDER_OAUTH["cline"] };
 
-// ClinePass OAuth Configuration (shares Cline's OAuth endpoints)
-export const CLINEPASS_CONFIG = { ...PROVIDER_OAUTH["clinepass"] };
-
 // GitLab Duo OAuth Configuration (Authorization Code Flow with PKCE)
 export const GITLAB_CONFIG = { ...PROVIDER_OAUTH["gitlab"] };
 
@@ -120,11 +131,17 @@ export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 // Kimchi OAuth Configuration (Browser token callback flow)
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
-// Grok CLI / Grok Build OAuth Configuration (Device Code Flow)
-// Endpoint: cli-chat-proxy.grok.com — same client_id as xai, different flow + scopes
-export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
+// AutoClaw OAuth Configuration (Google OAuth via AutoClaw overseas endpoint)
+// App-signing credentials (appId/appKey) + Google OAuth client + redirect port
+// are all declared in the registry entry; this re-export keeps the legacy
+// CONFIG-named references used by the OAuth service + providers map working.
+export const AUTOCLOW_CONFIG = { ...PROVIDER_OAUTH["autoclaw"] };
 
 // OAuth timeout (5 minutes)
+
+// Grok CLI / Grok Build OAuth Configuration (Device Code Flow)
+export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
+
 export const OAUTH_TIMEOUT = 300000;
 
 // Provider list
@@ -144,9 +161,8 @@ export const PROVIDERS = {
   KIMI_CODING: "kimi",
   KILOCODE: "kilocode",
   CLINE: "cline",
-  CLINEPASS: "clinepass",
   GITLAB: "gitlab",
   CODEBUDDY: "codebuddy-cn",
   KIMCHI: "kimchi",
-  GROK_CLI: "grok-cli",
+  AUTOCLOW: "autoclaw",
 };

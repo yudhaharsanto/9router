@@ -1497,7 +1497,7 @@ export async function runGoogleAccountAutomation({
       throw retryError;
     }
   }
-  await page.waitForTimeout(2_000);
+  await page.waitForTimeout(500);
 
   await handleProviderLoginGate(page, reportStep);
 
@@ -1525,7 +1525,7 @@ export async function runGoogleAccountAutomation({
       successPromise
         .then((result) => ({ kind: "success", result }))
         .catch((error) => ({ kind: "success_error", error })),
-      new Promise((resolve) => setTimeout(() => resolve(null), 800)),
+      new Promise((resolve) => setTimeout(() => resolve(null), 200)),
     ]);
 
     if (successResult?.kind === "success") {
@@ -1623,7 +1623,6 @@ export async function runGoogleAccountAutomation({
           "Could not fill the Google email field; retrying loop",
         );
       }
-      await page.waitForTimeout(700);
       continue;
     }
 
@@ -1643,7 +1642,6 @@ export async function runGoogleAccountAutomation({
           "Could not fill the Google password field; retrying loop",
         );
       }
-      await page.waitForTimeout(700);
       continue;
     }
 
@@ -1661,7 +1659,6 @@ export async function runGoogleAccountAutomation({
         "approving_consent",
         `Approving Google or ${serviceLabel} consent`,
       );
-      await page.waitForTimeout(700);
       continue;
     }
 
@@ -1669,7 +1666,6 @@ export async function runGoogleAccountAutomation({
       "waiting_for_next_screen",
       `Waiting for the next Google or ${serviceLabel} screen`,
     );
-    await page.waitForTimeout(700);
   }
 
   reportStep(

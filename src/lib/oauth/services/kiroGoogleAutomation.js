@@ -419,10 +419,25 @@ async function waitForFirstVisibleLocator(
 async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   if (!locator || value == null) return false;
 
+  // Focus + clear, then type with a short per-key delay. `fill()` pastes the
+  // whole string in one shot which can race with Google's form JS and cause
+  // characters to leak into the wrong field (e.g. password typed while the
+  // email field is still active). ~35ms/key is fast enough to feel instant
+  // but slow enough for the DOM to keep up.
   try {
-    await locator.fill(value, { timeout });
+    await locator.click({ timeout: 5_000 });
   } catch {
-    // swallow; verification + fallback below will decide
+    /* noop */
+  }
+  try {
+    await locator.fill("", { timeout: 5_000 });
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.type(value, { delay: 35, timeout });
+  } catch {
+    // fall through to fill fallback
   }
 
   let observed = "";
@@ -433,24 +448,12 @@ async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   }
   if (observed === value) return true;
 
-  // Fallback for React/Vue-controlled inputs where .fill() bypasses the
-  // framework's onChange wiring and the value snaps back to empty.
+  // Fallback: framework-controlled inputs that swallow key events — use fill.
   try {
-    await locator.click({ timeout: 5_000 });
-  } catch {
-    /* noop */
-  }
-  try {
-    await locator.fill("");
-  } catch {
-    /* noop */
-  }
-  try {
-    await locator.type(value, { delay: 50, timeout });
+    await locator.fill(value, { timeout });
   } catch {
     return false;
   }
-
   try {
     observed = await locator.inputValue();
   } catch {
@@ -563,7 +566,7 @@ async function handleGoogleOnboarding(page, pageText) {
       );
     })
     .catch(() => null);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(150);
 
   // Workspace welcome ("Welcome to your new account" for @domain.com) has
   // only one valid action: the primary "I understand" button. There is no
@@ -577,7 +580,7 @@ async function handleGoogleOnboarding(page, pageText) {
       APPROVE_BUTTON_SELECTORS,
     );
     if (acknowledged) {
-      await page.waitForTimeout(700);
+      await page.waitForTimeout(200);
       return true;
     }
     const submittedFromDom = await page
@@ -596,7 +599,7 @@ async function handleGoogleOnboarding(page, pageText) {
       })
       .catch(() => false);
     if (submittedFromDom) {
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(200);
       return true;
     }
     const formSubmitted = await page
@@ -608,14 +611,14 @@ async function handleGoogleOnboarding(page, pageText) {
       })
       .catch(() => false);
     if (formSubmitted) {
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(200);
       return true;
     }
   }
 
   const clickedSkip = await clickFirstActionable(page, SKIP_BUTTON_SELECTORS);
   if (clickedSkip) {
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(200);
     return true;
   }
 
@@ -624,7 +627,7 @@ async function handleGoogleOnboarding(page, pageText) {
     APPROVE_BUTTON_SELECTORS,
   );
   if (clickedContinue) {
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(200);
     return true;
   }
 

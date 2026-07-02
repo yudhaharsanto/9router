@@ -137,6 +137,21 @@ export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 // CONFIG-named references used by the OAuth service + providers map working.
 export const AUTOCLOW_CONFIG = { ...PROVIDER_OAUTH["autoclaw"] };
 
+// Livscene Configuration (Google OAuth via ai.livscene.com sign-up page)
+// No registry entry needed — livscene uses its own sign-up page + Google OAuth
+// client. The automation flow: sign-up page → checkbox → Google button →
+// Google login → dashboard → POST /api/token/ to create key → POST
+// /api/token/{id}/key to get full key.
+export const LIVSCENE_CONFIG = {
+  providerId: "livscene",
+  label: "Livscene",
+  baseUrl: "https://ai.livscene.com",
+  googleClientId:
+    "370343779570-r8ar5hcq2f6cf9asc9e0opilgfupmav5.apps.googleusercontent.com",
+  googleRedirectUri: "https://ai.livscene.com/oauth/google-oauth",
+  defaultAff: "Km2H",
+};
+
 // OAuth timeout (5 minutes)
 
 // Grok CLI / Grok Build OAuth Configuration (Device Code Flow)
@@ -165,4 +180,5 @@ export const PROVIDERS = {
   CODEBUDDY: "codebuddy-cn",
   KIMCHI: "kimchi",
   AUTOCLOW: "autoclaw",
+  LIVSCENE: "livscene",
 };

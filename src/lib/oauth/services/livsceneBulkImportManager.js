@@ -7,7 +7,7 @@ import { LIVSCENE_CONFIG } from "../constants/oauth.js";
 
 const LIVSCENE_PROVIDER_ID = LIVSCENE_CONFIG.providerId;
 const LIVSCENE_LABEL = LIVSCENE_CONFIG.label;
-const LIVSCENE_TIMEOUT_MS = 3 * 60_000;
+const LIVSCENE_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * Default connection saver for Livscene. Stores the API key (sk-...) as the
@@ -174,8 +174,11 @@ export class LivsceneBulkImportManager extends BulkImportManager {
       await this.persistJobSnapshot(job, { forcePreview: true });
 
       const signupUrl = `${LIVSCENE_CONFIG.baseUrl}/sign-up?aff=${this.aff}`;
-      await page.goto(signupUrl, { waitUntil: "networkidle", timeout: 60_000 });
-      await page.waitForTimeout(2000);
+      await page.goto(signupUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+      await page.waitForTimeout(3000);
 
       // Step 2: Check checkbox #legal-consent via dispatchEvent
       this.setAccountStep(account, "checking_consent", "Checking agreement");
@@ -194,12 +197,28 @@ export class LivsceneBulkImportManager extends BulkImportManager {
         "clicking_google",
         "Clicking Continue with Google",
       );
-      await page.evaluate(() => {
-        const btns = [...document.querySelectorAll("button")];
-        const g = btns.find((b) => /google/i.test(b.innerText || ""));
-        if (g) g.click();
-      });
-      await page.waitForTimeout(5000);
+      // Wait for Google button to appear, then click it
+      let googleBtnClicked = false;
+      for (let i = 0; i < 10; i++) {
+        googleBtnClicked = await page.evaluate(() => {
+          const btns = [...document.querySelectorAll("button")];
+          const g = btns.find((b) => /google/i.test(b.innerText || ""));
+          if (g) {
+            g.click();
+            return true;
+          }
+          return false;
+        });
+        if (googleBtnClicked) break;
+        await page.waitForTimeout(1000);
+      }
+      if (!googleBtnClicked) {
+        throw new Error("Could not find Continue with Google button");
+      }
+      // Wait for redirect to Google login
+      await page
+        .waitForURL("**/accounts.google.com/**", { timeout: 15_000 })
+        .catch(() => {});
 
       // Verify we're on Google login page
       if (!page.url().includes("accounts.google.com")) {
@@ -226,11 +245,17 @@ export class LivsceneBulkImportManager extends BulkImportManager {
       });
       successPromise.catch(() => {});
 
-      // Watch for URL change to livscene — resolves successPromise
-      page
-        .waitForURL("**/ai.livscene.com/**", { timeout: LIVSCENE_TIMEOUT_MS })
-        .then(() => resolveSuccess({ redirected: true }))
-        .catch(() => {});
+      // Watch for URL change to livscene — resolves successPromise.
+      // Use a polling loop instead of waitForURL because the URL may already
+      // have changed by the time waitForURL is called (race with automation).
+      const urlPollInterval = setInterval(() => {
+        try {
+          if (page.url().includes("ai.livscene.com")) {
+            resolveSuccess({ redirected: true });
+            clearInterval(urlPollInterval);
+          }
+        } catch {}
+      }, 300);
 
       await runGoogleAccountAutomation({
         page,
@@ -250,12 +275,20 @@ export class LivsceneBulkImportManager extends BulkImportManager {
         },
       });
 
+      clearInterval(urlPollInterval);
+
       // runGoogleAccountAutomation returns when successPromise resolves
       // (URL changed to livscene) or timeout. Verify we're on livscene.
       const currentUrl = page.url();
       if (!currentUrl.includes("ai.livscene.com")) {
+        // Shorten URL in error — full Google OAuth URL is very long
+        const shortUrl =
+          currentUrl.length > 80 ? currentUrl.slice(0, 80) + "..." : currentUrl;
+        const isGoogleStuck = currentUrl.includes("accounts.google.com");
         throw new Error(
-          `Google login did not redirect to Livscene. Current URL: ${currentUrl}`,
+          isGoogleStuck
+            ? `Google OAuth stuck (likely proxy/anti-bot). URL: ${shortUrl}`
+            : `Did not redirect to Livscene. URL: ${shortUrl}`,
         );
       }
 

@@ -84,6 +84,7 @@ export default {
     tokenUrl:
       "https://autoglm-api.autoglm.ai/userapi/overseasv1/google-oauth-login",
     refreshUrl: "https://autoglm-api.autoglm.ai/userapi/v1/refresh",
+    refresh: { encoding: "json" },
     userInfoUrl: "https://autoglm-api.autoglm.ai/userapi/v1/user-profile",
     redirectUri: "http://localhost:18432/auth/callback-google",
     callbackPath: "/auth/callback-google",

@@ -46,16 +46,15 @@ async function defaultSaveLivsceneConnection({
  * Livscene bulk import manager.
  *
  * Flow per account:
- *   1. Navigate to /sign-up?aff=<referral>
- *   2. Check #legal-consent checkbox (dispatchEvent click)
- *   3. Click "Continue with Google" button
- *   4. Google login (email → password → consent) via runGoogleAccountAutomation
- *   5. Wait for /dashboard redirect
- *   6. Get user ID from localStorage("uid")
- *   7. POST /api/token/ to create API key
- *   8. GET /api/token/?p=0&size=10 to get key ID
- *   9. POST /api/token/{id}/key to get full unmasked key
- *  10. Save connection with API key
+ *   1. Navigate to /sign-up?aff=<referral> (sets referral cookie)
+ *   2. Navigate directly to Google OAuth URL (button removed by provider)
+ *   3. Google login (email → password → consent) via runGoogleAccountAutomation
+ *   4. Wait for /dashboard redirect
+ *   5. Get user ID from localStorage("uid")
+ *   6. POST /api/token/ to create API key
+ *   7. GET /api/token/?p=0&size=10 to get key ID
+ *   8. POST /api/token/{id}/key to get full unmasked key
+ *   9. Save connection with API key
  *
  * Unlike AutoClaw, no proxy server or callback port is needed — livscene
  * handles the OAuth callback server-side and sets a session cookie.
@@ -165,7 +164,7 @@ export class LivsceneBulkImportManager extends BulkImportManager {
       // screenshots while the browser is running.
       account.runtimeSession = { context, page, browser };
 
-      // Step 1: Navigate to sign-up page with referral code
+      // Step 1: Navigate to sign-up page with referral code (sets cookie)
       this.setAccountStep(
         account,
         "opening_signup",
@@ -178,53 +177,31 @@ export class LivsceneBulkImportManager extends BulkImportManager {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
       });
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(2000);
 
-      // Step 2: Check checkbox #legal-consent via dispatchEvent
-      this.setAccountStep(account, "checking_consent", "Checking agreement");
-      await page.evaluate(() => {
-        const cb = document.getElementById("legal-consent");
-        if (cb)
-          cb.dispatchEvent(
-            new MouseEvent("click", { bubbles: true, cancelable: true }),
-          );
-      });
-      await page.waitForTimeout(500);
-
-      // Step 3: Click "Continue with Google" button
+      // Step 2: Navigate directly to Google OAuth — livscene removed the
+      // "Continue with Google" button, so we construct the OAuth URL manually.
+      // Client ID from livscene's Google OAuth config.
       this.setAccountStep(
         account,
-        "clicking_google",
-        "Clicking Continue with Google",
+        "redirecting_to_google",
+        "Opening Google OAuth",
       );
-      // Wait for Google button to appear, then click it
-      let googleBtnClicked = false;
-      for (let i = 0; i < 10; i++) {
-        googleBtnClicked = await page.evaluate(() => {
-          const btns = [...document.querySelectorAll("button")];
-          const g = btns.find((b) => /google/i.test(b.innerText || ""));
-          if (g) {
-            g.click();
-            return true;
-          }
-          return false;
-        });
-        if (googleBtnClicked) break;
-        await page.waitForTimeout(1000);
-      }
-      if (!googleBtnClicked) {
-        throw new Error("Could not find Continue with Google button");
-      }
-      // Wait for redirect to Google login
-      await page
-        .waitForURL("**/accounts.google.com/**", { timeout: 15_000 })
-        .catch(() => {});
+      const googleOAuthUrl =
+        "https://accounts.google.com/o/oauth2/auth" +
+        `?client_id=370343779570-r8ar5hcq2f6cf9asc9e0opilgfupmav5.apps.googleusercontent.com` +
+        `&redirect_uri=${encodeURIComponent("https://ai.livscene.com/oauth/google-oauth")}` +
+        `&response_type=code` +
+        `&scope=${encodeURIComponent("openid email profile")}` +
+        `&prompt=consent`;
+      await page.goto(googleOAuthUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
 
       // Verify we're on Google login page
       if (!page.url().includes("accounts.google.com")) {
-        throw new Error(
-          "Did not redirect to Google login page after clicking Continue with Google",
-        );
+        throw new Error("Did not reach Google OAuth page");
       }
 
       // Step 4: Run Google account automation (email → password → consent)

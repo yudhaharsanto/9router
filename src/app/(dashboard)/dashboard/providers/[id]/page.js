@@ -1156,7 +1156,7 @@ export default function ProviderDetailPage() {
     selectedConnectionIds.includes(connectionId);
 
   const connectionsList = (
-    <div className="flex min-w-0 flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03]">
+    <div className="flex min-w-0 max-h-[500px] flex-col divide-y divide-black/[0.03] overflow-y-auto dark:divide-white/[0.03]">
       {connections.map((conn, index) => (
         <div key={conn.id} className="flex min-w-0 items-stretch">
           <div className="flex shrink-0 items-center pl-1 sm:pl-2">

@@ -1,9 +1,11 @@
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { DefaultExecutor } from "./default.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import {
   getModelUpstreamId,
   PROVIDER_ID_TO_ALIAS,
 } from "../config/providerModels.js";
+import { PROVIDER_OAUTH } from "../providers/index.js";
 
 /**
  * AutoClawExecutor — talks to AutoClaw's OpenAI-compatible LLM proxy.
@@ -79,6 +81,66 @@ export class AutoClawExecutor extends DefaultExecutor {
   resolveUpstreamModel(model) {
     const alias = PROVIDER_ID_TO_ALIAS[this.provider] || this.provider;
     return getModelUpstreamId(alias, model) || model;
+  }
+
+  /**
+   * AutoClaw refresh uses a custom endpoint with app-signing headers
+   * (X-Auth-Appid / X-Auth-Sign = md5(appId&ts&appKey)), not standard OAuth.
+   */
+  async refreshCredentials(credentials, log, proxyOptions = null) {
+    if (!credentials?.refreshToken) return null;
+    const cfg = PROVIDER_OAUTH.autoclaw;
+    if (!cfg?.refreshUrl || !cfg?.appId || !cfg?.appKey) return null;
+
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sign = createHash("md5")
+      .update(`${cfg.appId}&${ts}&${cfg.appKey}`)
+      .digest("hex");
+    const deviceId = credentials?.providerSpecificData?.deviceId || "";
+
+    try {
+      const res = await proxyAwareFetch(
+        cfg.refreshUrl,
+        {
+          method: "POST",
+          headers: {
+            "X-Auth-Appid": cfg.appId,
+            "X-Auth-TimeStamp": ts,
+            "X-Auth-Sign": sign,
+            "X-Product": "autoclaw",
+            "X-Version": "1.9.1",
+            "X-Tm": "win",
+            "X-Trace-Id": randomUUID(),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            refresh_token: credentials.refreshToken,
+            device_id: deviceId,
+          }),
+        },
+        proxyOptions,
+      );
+
+      if (!res.ok) {
+        log?.error?.("TOKEN", `autoclaw refresh failed: ${res.status}`);
+        return null;
+      }
+
+      const data = await res.json();
+      let accessToken = data.access_token || "";
+      let refreshToken = data.refresh_token || credentials.refreshToken;
+      if (accessToken.startsWith("Bearer ")) accessToken = accessToken.slice(7);
+      if (refreshToken.startsWith("Bearer "))
+        refreshToken = refreshToken.slice(7);
+
+      if (!accessToken) return null;
+
+      log?.info?.("TOKEN", "autoclaw refreshed");
+      return { accessToken, refreshToken };
+    } catch (error) {
+      log?.error?.("TOKEN", `autoclaw refresh error: ${error.message}`);
+      return null;
+    }
   }
 }
 

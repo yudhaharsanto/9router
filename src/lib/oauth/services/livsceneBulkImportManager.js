@@ -246,13 +246,23 @@ export class LivsceneBulkImportManager extends BulkImportManager {
       successPromise.catch(() => {});
 
       // Watch for URL change to livscene — resolves successPromise.
-      // Use a polling loop instead of waitForURL because the URL may already
-      // have changed by the time waitForURL is called (race with automation).
+      // Require 2 consecutive checks to avoid false positives from
+      // brief redirect bounces (Google → livscene → back to Google).
+      let livsceneHits = 0;
       const urlPollInterval = setInterval(() => {
         try {
-          if (page.url().includes("ai.livscene.com")) {
-            resolveSuccess({ redirected: true });
-            clearInterval(urlPollInterval);
+          const url = page.url();
+          if (
+            url.includes("ai.livscene.com") &&
+            !url.includes("accounts.google.com")
+          ) {
+            livsceneHits++;
+            if (livsceneHits >= 2) {
+              resolveSuccess({ redirected: true });
+              clearInterval(urlPollInterval);
+            }
+          } else {
+            livsceneHits = 0;
           }
         } catch {}
       }, 300);
@@ -292,35 +302,53 @@ export class LivsceneBulkImportManager extends BulkImportManager {
         );
       }
 
-      // Step 5: Wait for dashboard
+      // Step 5: Wait for livscene to finish OAuth exchange + redirect to
+      // dashboard. Livscene is a SPA — client-side route changes don't
+      // trigger waitForURL, so we poll the URL instead.
       this.setAccountStep(
         account,
         "dashboard_reached",
-        "Livscene dashboard reached",
+        "Waiting for Livscene dashboard",
       );
-      if (!currentUrl.includes("dashboard")) {
-        try {
-          await page.waitForURL("**/dashboard*", { timeout: 15_000 });
-        } catch {
-          await page.goto(`${LIVSCENE_CONFIG.baseUrl}/dashboard/overview`, {
-            waitUntil: "domcontentloaded",
-            timeout: 30_000,
-          });
+      let dashboardReached = false;
+      for (let i = 0; i < 30; i++) {
+        const url = page.url();
+        if (url.includes("/dashboard")) {
+          dashboardReached = true;
+          break;
         }
+        // If redirected back to Google or to sign-in, OAuth exchange failed
+        if (
+          url.includes("accounts.google.com") ||
+          url.includes("/sign-in") ||
+          url.includes("/login")
+        ) {
+          throw new Error(
+            "OAuth session failed — Google or Livscene rejected the login (likely proxy/anti-bot). Try a different proxy.",
+          );
+        }
+        await page.waitForTimeout(1000);
       }
+      if (!dashboardReached) {
+        const url = page.url();
+        const shortUrl = url.length > 80 ? url.slice(0, 80) + "..." : url;
+        throw new Error(`Livscene dashboard not reached. URL: ${shortUrl}`);
+      }
+      // Give the SPA time to initialize + set localStorage
       await page.waitForTimeout(3000);
 
       // Step 6: Get user ID from localStorage (retry — JS app needs time
       // to initialize and set uid after page load)
       let userId = null;
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 15; i++) {
         userId = await page.evaluate(() => localStorage.getItem("uid"));
         if (userId) break;
         await page.waitForTimeout(1000);
       }
       if (!userId) {
+        const url = page.url();
         throw new Error(
-          "Could not get user ID from localStorage after retries",
+          `Could not get user ID from localStorage. URL: ${url.slice(0, 80)}`,
         );
       }
       console.log(`[livscene-bulk] ${account.email} userId=${userId}`);

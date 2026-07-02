@@ -240,6 +240,32 @@ export default function BulkAccountAutomationModal({
     }));
   }, [activeJob]);
 
+  // Split groups: pending (in-progress) vs completed (success + failed)
+  const pendingGroups = useMemo(
+    () =>
+      groupedAccounts.filter(
+        (g) => !["success", "failed", "cancelled"].includes(g.status),
+      ),
+    [groupedAccounts],
+  );
+  const successGroups = useMemo(
+    () => groupedAccounts.filter((g) => g.status === "success"),
+    [groupedAccounts],
+  );
+  const failedGroups = useMemo(
+    () =>
+      groupedAccounts.filter((g) => ["failed", "cancelled"].includes(g.status)),
+    [groupedAccounts],
+  );
+  const successAccounts = useMemo(
+    () => successGroups.flatMap((g) => g.accounts),
+    [successGroups],
+  );
+  const failedAccounts = useMemo(
+    () => failedGroups.flatMap((g) => g.accounts),
+    [failedGroups],
+  );
+
   const resetState = useCallback(() => {
     setBulkText("");
     setConcurrency(String(DEFAULT_CONCURRENCY));
@@ -830,11 +856,57 @@ export default function BulkAccountAutomationModal({
                   )}
                 </div>
               </div>
+
+              {pendingGroups.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold">In Progress</p>
+                  {pendingGroups.map((group) => (
+                    <div
+                      key={group.status}
+                      className="rounded-xl border border-border p-3"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <AccountStatusBadge status={group.status} />
+                          <p className="text-sm font-semibold capitalize">
+                            {formatStepLabel(group.status)}
+                          </p>
+                        </div>
+                        <p className="text-xs text-text-muted">
+                          {group.accounts.length}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        {group.accounts.map((account) => (
+                          <AccountCard
+                            key={`${account.email}-${account.line}`}
+                            account={account}
+                            formatStepLabel={formatStepLabel}
+                            formatClock={formatClock}
+                            onOpenManualSession={
+                              account.manualSessionAvailable && account.workerId
+                                ? () =>
+                                    handleOpenManualSession(account.workerId)
+                                : null
+                            }
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
-              <p className="text-sm font-semibold">Accounts</p>
-              {groupedAccounts.map((group) => (
+              <p className="text-sm font-semibold">Completed</p>
+              {successAccounts.length === 0 && failedAccounts.length === 0 && (
+                <p className="text-xs text-text-muted">
+                  No completed accounts yet.
+                </p>
+              )}
+              {successGroups.map((group) => (
                 <div
                   key={group.status}
                   className="rounded-xl border border-border p-3"
@@ -858,11 +930,35 @@ export default function BulkAccountAutomationModal({
                         account={account}
                         formatStepLabel={formatStepLabel}
                         formatClock={formatClock}
-                        onOpenManualSession={
-                          account.manualSessionAvailable && account.workerId
-                            ? () => handleOpenManualSession(account.workerId)
-                            : null
-                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {failedGroups.map((group) => (
+                <div
+                  key={group.status}
+                  className="rounded-xl border border-border p-3"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AccountStatusBadge status={group.status} />
+                      <p className="text-sm font-semibold capitalize">
+                        {formatStepLabel(group.status)}
+                      </p>
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      {group.accounts.length}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {group.accounts.map((account) => (
+                      <AccountCard
+                        key={`${account.email}-${account.line}`}
+                        account={account}
+                        formatStepLabel={formatStepLabel}
+                        formatClock={formatClock}
                       />
                     ))}
                   </div>

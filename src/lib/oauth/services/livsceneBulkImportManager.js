@@ -267,20 +267,28 @@ export class LivsceneBulkImportManager extends BulkImportManager {
       );
       if (!currentUrl.includes("dashboard")) {
         try {
-          await page.waitForURL("**/dashboard/**", { timeout: 15_000 });
+          await page.waitForURL("**/dashboard*", { timeout: 15_000 });
         } catch {
           await page.goto(`${LIVSCENE_CONFIG.baseUrl}/dashboard/overview`, {
-            waitUntil: "networkidle",
+            waitUntil: "domcontentloaded",
             timeout: 30_000,
           });
         }
       }
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
 
-      // Step 6: Get user ID from localStorage
-      const userId = await page.evaluate(() => localStorage.getItem("uid"));
+      // Step 6: Get user ID from localStorage (retry — JS app needs time
+      // to initialize and set uid after page load)
+      let userId = null;
+      for (let i = 0; i < 10; i++) {
+        userId = await page.evaluate(() => localStorage.getItem("uid"));
+        if (userId) break;
+        await page.waitForTimeout(1000);
+      }
       if (!userId) {
-        throw new Error("Could not get user ID from localStorage");
+        throw new Error(
+          "Could not get user ID from localStorage after retries",
+        );
       }
       console.log(`[livscene-bulk] ${account.email} userId=${userId}`);
 

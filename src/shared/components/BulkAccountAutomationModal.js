@@ -80,6 +80,7 @@ export default function BulkAccountAutomationModal({
   title,
   serviceName,
   asPage = false,
+  showReferralInput = false,
 }) {
   const isOpen = asPage ? true : isOpenProp;
   const storageKey = `${provider}-bulk-import-active-job`;
@@ -98,6 +99,7 @@ export default function BulkAccountAutomationModal({
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [jobRestoreNotice, setJobRestoreNotice] = useState(null);
+  const [affCode, setAffCode] = useState("Km2H");
 
   const runningJob = activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status);
   const finishedJob = activeJob && TERMINAL_JOB_STATUSES.has(activeJob.status);
@@ -317,6 +319,9 @@ export default function BulkAccountAutomationModal({
       } else if (proxyUrl.trim()) {
         postBody.proxyUrl = proxyUrl.trim();
       }
+      if (showReferralInput && affCode.trim()) {
+        postBody.aff = affCode.trim();
+      }
       const res = await fetch(`/api/oauth/${provider}/bulk-import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -416,6 +421,23 @@ export default function BulkAccountAutomationModal({
             <label className="mb-2 block text-sm font-medium">
               Bulk Accounts <span className="text-red-500">*</span>
             </label>
+            {showReferralInput && (
+              <div className="mb-3">
+                <label className="mb-1 block text-sm font-medium">
+                  Referral Code
+                </label>
+                <input
+                  type="text"
+                  value={affCode}
+                  onChange={(e) => setAffCode(e.target.value)}
+                  placeholder="Km2H"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <p className="mt-1 text-xs text-text-muted">
+                  Livscene referral code (aff parameter in sign-up URL).
+                </p>
+              </div>
+            )}
             <textarea
               value={bulkText}
               onChange={(event) => setBulkText(event.target.value)}

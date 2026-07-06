@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, Input, SegmentedControl } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import {
   AreaChart,
   Area,
@@ -974,7 +975,6 @@ function SmartCombosSection() {
               <tr className="border-b border-border-subtle text-text-muted">
                 <th className="text-left py-2 px-2 font-medium">Combo Name</th>
                 <th className="text-center py-2 px-2 font-medium">Members</th>
-                <th className="text-center py-2 px-2 font-medium">Mode</th>
                 <th className="text-left py-2 px-2 font-medium">
                   Routes To (in order)
                 </th>
@@ -983,9 +983,7 @@ function SmartCombosSection() {
             </thead>
             <tbody>
               {combos.map((combo, idx) => {
-                const isFallback = combo.kind === "fallback" || !combo.kind;
                 const models = combo.models || [];
-                const copyValue = models.join("\n");
                 return (
                   <tr
                     key={combo.id || idx}
@@ -1004,20 +1002,6 @@ function SmartCombosSection() {
                     <td className="py-2.5 px-2 text-center">
                       <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-500/10 text-brand-500 text-[11px] font-medium">
                         {models.length}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                          isFallback
-                            ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
-                            : "bg-blue-500/10 text-blue-500 border-blue-500/30"
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">
-                          {isFallback ? "arrow_downward" : "sync"}
-                        </span>
-                        {isFallback ? "Fallback" : "Round Robin"}
                       </span>
                     </td>
                     <td className="py-2.5 px-2">
@@ -1039,7 +1023,7 @@ function SmartCombosSection() {
                       </div>
                     </td>
                     <td className="py-2.5 px-2 text-center">
-                      <CopyBtn value={copyValue} title="Copy models" />
+                      <CopyBtn value={combo.name} title="Copy combo name" />
                     </td>
                   </tr>
                 );
@@ -1098,10 +1082,13 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
     return i >= 0 ? str.slice(i + 1) : str;
   };
 
-  const hasVision = (name) => /vision|vl|multimodal|image/i.test(name);
-  const hasReasoning = (name) => /reason|think|o1|o3|deepseek-r1/i.test(name);
-  const hasTools = (name) => /tool|function|gpt-4|claude|gemini/.test(name);
-  const hasImage = (name) => /image|dall-e|flux|midjourney|stable/i.test(name);
+  const getCaps = (modelStr) => {
+    const provider = modelStr.includes("/") ? modelStr.split("/")[0] : "";
+    const model = modelStr.includes("/")
+      ? modelStr.slice(modelStr.indexOf("/") + 1)
+      : modelStr;
+    return getCapabilitiesForModel(provider, model);
+  };
 
   const filtered = (models || []).filter((m) => {
     if (!filter) return true;
@@ -1109,10 +1096,14 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
     return m.toLowerCase().includes(q);
   });
 
-  const visionCount = (models || []).filter((m) => hasVision(m)).length;
-  const reasoningCount = (models || []).filter((m) => hasReasoning(m)).length;
-  const toolsCount = (models || []).filter((m) => hasTools(m)).length;
-  const imageCount = (models || []).filter((m) => hasImage(m)).length;
+  const visionCount = (models || []).filter((m) => getCaps(m).vision).length;
+  const reasoningCount = (models || []).filter(
+    (m) => getCaps(m).reasoning,
+  ).length;
+  const toolsCount = (models || []).filter((m) => getCaps(m).tools).length;
+  const imageCount = (models || []).filter(
+    (m) => getCaps(m).imageOutput,
+  ).length;
 
   return (
     <Card padding="md">
@@ -1227,11 +1218,12 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
             <tbody className="divide-y divide-border-subtle/50">
               {filtered.map((m, i) => {
                 const bid = bareId(m);
-                const caps = [];
-                if (hasVision(m)) caps.push("v");
-                if (hasReasoning(m)) caps.push("r");
-                if (hasTools(m)) caps.push("t");
-                if (hasImage(m)) caps.push("i");
+                const caps = getCaps(m);
+                const tags = [];
+                if (caps.vision) tags.push("v");
+                if (caps.reasoning) tags.push("r");
+                if (caps.tools) tags.push("t");
+                if (caps.imageOutput) tags.push("i");
                 return (
                   <tr
                     key={i}
@@ -1249,9 +1241,9 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                       </div>
                     </td>
                     <td className="py-1.5 px-2 text-center">
-                      {caps.length > 0 ? (
+                      {tags.length > 0 ? (
                         <div className="flex items-center justify-center gap-0.5">
-                          {caps.includes("v") && (
+                          {tags.includes("v") && (
                             <span
                               className="w-4 h-4 rounded text-[9px] bg-blue-500/10 text-blue-500 flex items-center justify-center font-medium"
                               title="Vision"
@@ -1259,7 +1251,7 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                               V
                             </span>
                           )}
-                          {caps.includes("r") && (
+                          {tags.includes("r") && (
                             <span
                               className="w-4 h-4 rounded text-[9px] bg-purple-500/10 text-purple-500 flex items-center justify-center font-medium"
                               title="Reasoning"
@@ -1267,7 +1259,7 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                               R
                             </span>
                           )}
-                          {caps.includes("t") && (
+                          {tags.includes("t") && (
                             <span
                               className="w-4 h-4 rounded text-[9px] bg-amber-500/10 text-amber-500 flex items-center justify-center font-medium"
                               title="Tools"
@@ -1275,7 +1267,7 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                               T
                             </span>
                           )}
-                          {caps.includes("i") && (
+                          {tags.includes("i") && (
                             <span
                               className="w-4 h-4 rounded text-[9px] bg-green-500/10 text-green-500 flex items-center justify-center font-medium"
                               title="Image"

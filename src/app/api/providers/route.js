@@ -180,15 +180,12 @@ export async function POST(request) {
       body.providerSpecificData,
     );
 
-    // Compatible nodes share one endpoint but allow multiple API keys (key rotation /
-    // load-balancing). Custom embedding nodes still allow exactly one connection.
+    // Compatible LLM nodes support multiple API-key connections (key pool); runtime
+    // rotates/fails over via getProviderCredentials. Embedding nodes stay single-connection.
     if (isOpenAICompatibleProvider(provider)) {
       const node = await getProviderNodeById(provider);
       if (!node) {
-        return NextResponse.json(
-          { error: "OpenAI Compatible node not found" },
-          { status: 404 },
-        );
+        return NextResponse.json({ error: "OpenAI Compatible node not found" }, { status: 404 });
       }
       providerSpecificData = {
         prefix: node.prefix,
@@ -199,10 +196,7 @@ export async function POST(request) {
     } else if (isAnthropicCompatibleProvider(provider)) {
       const node = await getProviderNodeById(provider);
       if (!node) {
-        return NextResponse.json(
-          { error: "Anthropic Compatible node not found" },
-          { status: 404 },
-        );
+        return NextResponse.json({ error: "Anthropic Compatible node not found" }, { status: 404 });
       }
       providerSpecificData = {
         prefix: node.prefix,
@@ -215,16 +209,6 @@ export async function POST(request) {
         return NextResponse.json(
           { error: "Custom Embedding node not found" },
           { status: 404 },
-        );
-      }
-      const existingConnections = await getProviderConnections({ provider });
-      if (existingConnections.length > 0) {
-        return NextResponse.json(
-          {
-            error:
-              "Only one connection is allowed for this Custom Embedding node",
-          },
-          { status: 400 },
         );
       }
       providerSpecificData = {

@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Card, Button, Input, SegmentedControl } from "@/shared/components";
+import {
+  Card,
+  Button,
+  Input,
+  SegmentedControl,
+  CapacityBadges,
+} from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
@@ -1219,17 +1225,12 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
               {filtered.map((m, i) => {
                 const bid = bareId(m);
                 const caps = getCaps(m);
-                const tags = [];
-                if (caps.vision) tags.push("v");
-                if (caps.reasoning) tags.push("r");
-                if (caps.tools) tags.push("t");
-                if (caps.imageOutput) tags.push("i");
                 return (
                   <tr
                     key={i}
                     className="hover:bg-surface-2/50 transition-colors cursor-pointer"
                     onClick={() => {
-                      copyText(m);
+                      copyText(bid);
                     }}
                   >
                     <td className="py-1.5 px-3">
@@ -1241,50 +1242,13 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                       </div>
                     </td>
                     <td className="py-1.5 px-2 text-center">
-                      {tags.length > 0 ? (
-                        <div className="flex items-center justify-center gap-0.5">
-                          {tags.includes("v") && (
-                            <span
-                              className="w-4 h-4 rounded text-[9px] bg-blue-500/10 text-blue-500 flex items-center justify-center font-medium"
-                              title="Vision"
-                            >
-                              V
-                            </span>
-                          )}
-                          {tags.includes("r") && (
-                            <span
-                              className="w-4 h-4 rounded text-[9px] bg-purple-500/10 text-purple-500 flex items-center justify-center font-medium"
-                              title="Reasoning"
-                            >
-                              R
-                            </span>
-                          )}
-                          {tags.includes("t") && (
-                            <span
-                              className="w-4 h-4 rounded text-[9px] bg-amber-500/10 text-amber-500 flex items-center justify-center font-medium"
-                              title="Tools"
-                            >
-                              T
-                            </span>
-                          )}
-                          {tags.includes("i") && (
-                            <span
-                              className="w-4 h-4 rounded text-[9px] bg-green-500/10 text-green-500 flex items-center justify-center font-medium"
-                              title="Image"
-                            >
-                              I
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-text-muted">—</span>
-                      )}
+                      <CapacityBadges caps={caps} size={14} />
                     </td>
                     <td className="py-1.5 px-2 text-center">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          copyText(m);
+                          copyText(bid);
                         }}
                         className="p-1 rounded text-text-muted hover:text-primary transition-colors"
                         type="button"

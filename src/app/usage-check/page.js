@@ -253,28 +253,22 @@ export default function UsageCheckPage() {
                   </p>
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon="search"
-                onClick={resetLookup}
-              >
-                New lookup
-              </Button>
-            </div>
-
-            {/* Period filter */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-text-muted">
-                Period
-              </label>
-              <SegmentedControl
-                options={PERIODS}
-                value={period}
-                onChange={onPeriodChange}
-                size="sm"
-                className="w-full sm:w-auto"
-              />
+              <div className="flex items-center gap-2">
+                <SegmentedControl
+                  options={PERIODS}
+                  value={period}
+                  onChange={onPeriodChange}
+                  size="sm"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon="search"
+                  onClick={resetLookup}
+                >
+                  New lookup
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
@@ -633,7 +627,7 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
       </div>
 
       {/* Overview cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-2 gap-3">
         <Stat
           label={`Used (${rangeLabel})`}
           rawValue={breakdownTotal}
@@ -1060,6 +1054,7 @@ function SmartCombosSection() {
 
 function ModelsList({ apiKey, origin, aliases = {} }) {
   const [models, setModels] = useState(null);
+  const [combos, setCombos] = useState([]);
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
@@ -1069,12 +1064,18 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
     })
       .then((r) => r.json())
       .then((json) => {
-        if (!cancelled)
+        if (!cancelled) {
+          const comboSet = new Set(combos.map((c) => c.name));
           setModels(
             (json?.data || json?.models || [])
               .map((m) => m.id || m.name)
-              .filter(Boolean),
+              .filter(Boolean)
+              .filter((m) => {
+                const bid = m.includes("/") ? m.split("/")[1] : m;
+                return !comboSet.has(m) && !comboSet.has(bid);
+              }),
           );
+        }
       })
       .catch(() => {
         if (!cancelled) setModels([]);
@@ -1082,7 +1083,14 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
     return () => {
       cancelled = true;
     };
-  }, [apiKey, origin]);
+  }, [apiKey, origin, combos]);
+
+  useEffect(() => {
+    fetch("/api/public/combos")
+      .then((r) => r.json())
+      .then((d) => setCombos(d.combos || []))
+      .catch(() => {});
+  }, []);
 
   const bareId = (s) => {
     const str = String(s);

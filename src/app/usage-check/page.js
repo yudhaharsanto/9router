@@ -1,13 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  Card,
-  Button,
-  Input,
-  Modal,
-  SegmentedControl,
-} from "@/shared/components";
+import { Card, Button, Input, SegmentedControl } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import {
@@ -185,7 +179,9 @@ export default function UsageCheckPage() {
         className="landing-grid absolute inset-0 pointer-events-none"
         aria-hidden="true"
       />
-      <div className="relative z-10 w-full max-w-3xl mt-8 sm:mt-12">
+      <div
+        className={`relative z-10 w-full mt-8 sm:mt-12 ${inDetail ? "max-w-6xl" : "max-w-md mx-auto"}`}
+      >
         {!inDetail ? (
           <>
             <div className="text-center mb-8">
@@ -281,21 +277,33 @@ export default function UsageCheckPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-4">
-              {loading
-                ? Array.from({ length: data.results.length || 1 }).map(
-                    (_, i) => <SkeletonCard key={i} />,
-                  )
-                : data.results.map((r, i) => (
-                    <KeyCard
-                      key={i}
-                      r={r}
-                      origin={origin}
-                      period={period}
-                      aliases={data.aliases || {}}
-                      excludedProviders={data.excludedProviders || []}
-                    />
-                  ))}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <div className="flex flex-col gap-4">
+                {loading
+                  ? Array.from({ length: data.results.length || 1 }).map(
+                      (_, i) => <SkeletonCard key={i} />,
+                    )
+                  : data.results.map((r, i) => (
+                      <KeyCard
+                        key={i}
+                        r={r}
+                        origin={origin}
+                        period={period}
+                        aliases={data.aliases || {}}
+                        excludedProviders={data.excludedProviders || []}
+                      />
+                    ))}
+              </div>
+              <div className="flex flex-col gap-4">
+                <SmartCombosSection />
+                {data.results?.[0]?.key && (
+                  <ModelsList
+                    apiKey={data.results[0].key}
+                    origin={origin}
+                    aliases={data.aliases || {}}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -531,9 +539,6 @@ function ModelIcon({ model, provider, size = 22 }) {
 
 function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
   const [showKey, setShowKey] = useState(false);
-  const [availModels, setAvailModels] = useState(null);
-  const [showModelsModal, setShowModelsModal] = useState(false);
-  const [availFilter, setAvailFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const [sortBy, setSortBy] = useState("tokens");
   const [showDocs, setShowDocs] = useState(false);
@@ -565,36 +570,6 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
     return [...set];
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      if (restricted) {
-        setAvailModels(r.allowedModels);
-        return;
-      }
-      if (!r.key) {
-        setAvailModels([]);
-        return;
-      }
-      try {
-        const res = await fetch(`${origin}/v1/models`, {
-          headers: { Authorization: `Bearer ${r.key}` },
-        });
-        const json = await res.json();
-        const list = (json?.data || json?.models || [])
-          .map((m) => m.id || m.name)
-          .filter(Boolean);
-        if (!cancelled) setAvailModels(list);
-      } catch {
-        if (!cancelled) setAvailModels([]);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [r, origin, restricted]);
-
   const breakdownTotal =
     period && period !== ""
       ? r.usedPeriod
@@ -621,31 +596,10 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
     return sorted;
   })();
 
-  const filteredAvail = (availModels || []).filter((m) => {
-    if (!availFilter) return true;
-    const q = availFilter.toLowerCase();
-    if (m.toLowerCase().includes(q)) return true;
-    return aliasesFor(m).some((a) => a.toLowerCase().includes(q));
-  });
-
   const docModel =
-    (restricted && r.allowedModels[0]) ||
-    (Array.isArray(availModels) && availModels[0]) ||
-    "cc/claude-opus-4.7";
-
-  const availEntries = (() => {
-    const out = [];
-    for (const m of filteredAvail) {
-      const al = aliasesFor(m);
-      if (al.length > 0) {
-        for (const a of al) out.push({ display: a, model: m, isAlias: true });
-      } else {
-        out.push({ display: m, model: m, isAlias: false });
-      }
-    }
-    return out;
-  })();
-  const copyAllValue = availEntries.map((e) => e.display).join("\n");
+    restricted && r.allowedModels[0]
+      ? r.allowedModels[0]
+      : "cc/claude-opus-4.7";
 
   const totalRequests = (r.models || []).reduce(
     (s, m) => s + (Number(m.requests) || 0),
@@ -676,58 +630,6 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
             Limit reached
           </span>
         )}
-      </div>
-
-      {/* Connection info */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
-          <span className="text-[11px] text-text-muted w-16 shrink-0">
-            Base URL
-          </span>
-          <code className="text-xs flex-1 truncate">{v1Url}</code>
-          <CopyBtn value={v1Url} title="Copy URL" />
-        </div>
-        {r.key && (
-          <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
-            <span className="text-[11px] text-text-muted w-16 shrink-0">
-              API key
-            </span>
-            <code className="text-xs flex-1 truncate font-mono">
-              {showKey ? r.key : maskKey(r.key)}
-            </code>
-            <button
-              onClick={() => setShowKey((s) => !s)}
-              className="p-1 rounded text-text-muted hover:text-primary"
-              title={showKey ? "Hide" : "Show"}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[15px]">
-                {showKey ? "visibility_off" : "visibility"}
-              </span>
-            </button>
-            <CopyBtn value={r.key} title="Copy API key" />
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowModelsModal(true)}
-          className="flex items-center justify-between gap-2 bg-surface-2 rounded-[10px] px-3 py-2 hover:border-brand-500/30 border border-transparent transition-all"
-        >
-          <span className="text-[11px] text-text-muted flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[15px]">
-              grid_view
-            </span>
-            Available models
-          </span>
-          <span className="flex items-center gap-1 text-xs text-text-main">
-            {availModels === null
-              ? "…"
-              : `${availEntries.length}${restricted ? " (restricted)" : ""}`}
-            <span className="material-symbols-outlined text-[16px] text-text-muted">
-              chevron_right
-            </span>
-          </span>
-        </button>
       </div>
 
       {/* Overview cards */}
@@ -815,6 +717,38 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
           )}
         </div>
       )}
+
+      {/* Connection info */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
+          <span className="text-[11px] text-text-muted w-16 shrink-0">
+            Base URL
+          </span>
+          <code className="text-xs flex-1 truncate">{v1Url}</code>
+          <CopyBtn value={v1Url} title="Copy URL" />
+        </div>
+        {r.key && (
+          <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
+            <span className="text-[11px] text-text-muted w-16 shrink-0">
+              API key
+            </span>
+            <code className="text-xs flex-1 truncate font-mono">
+              {showKey ? r.key : maskKey(r.key)}
+            </code>
+            <button
+              onClick={() => setShowKey((s) => !s)}
+              className="p-1 rounded text-text-muted hover:text-primary"
+              title={showKey ? "Hide" : "Show"}
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[15px]">
+                {showKey ? "visibility_off" : "visibility"}
+              </span>
+            </button>
+            <CopyBtn value={r.key} title="Copy API key" />
+          </div>
+        )}
+      </div>
 
       {/* API usage docs */}
       <div className="border-t border-black/[0.06] dark:border-white/[0.06] pt-3">
@@ -966,83 +900,410 @@ function KeyCard({ r, origin, period, aliases = {}, excludedProviders = [] }) {
           </p>
         )}
       </div>
+    </Card>
+  );
+}
 
-      {/* Available models dialog */}
-      <Modal
-        isOpen={showModelsModal}
-        title={`Available models${restricted ? " (restricted)" : ""} · ${r.name}`}
-        onClose={() => setShowModelsModal(false)}
+function SmartCombosSection() {
+  const [combos, setCombos] = useState([]);
+  const [aliases, setAliases] = useState({});
+  const [expanded, setExpanded] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/public/combos")
+      .then((r) => r.json())
+      .then((d) => {
+        setCombos(d.combos || []);
+        setAliases(d.aliases || {});
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  if (!loaded) return null;
+  if (!combos.length) return null;
+
+  const bareId = (s) => {
+    const str = String(s);
+    const i = str.indexOf("/");
+    return i >= 0 ? str.slice(i + 1) : str;
+  };
+
+  const aliasesByTarget = (() => {
+    const map = {};
+    for (const [aliasName, target] of Object.entries(aliases || {})) {
+      const t = String(target);
+      (map[t] ||= []).push(aliasName);
+      const b = bareId(t);
+      if (b !== t) (map[`bare:${b}`] ||= []).push(aliasName);
+    }
+    return map;
+  })();
+
+  const aliasesFor = (m) => {
+    const set = new Set([
+      ...(aliasesByTarget[m] || []),
+      ...(aliasesByTarget[`bare:${bareId(m)}`] || []),
+    ]);
+    return [...set];
+  };
+
+  return (
+    <Card className="flex flex-col gap-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((s) => !s)}
+        className="flex items-center justify-between w-full"
       >
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="Filter models..."
-              value={availFilter}
-              onChange={(e) => setAvailFilter(e.target.value)}
-              icon="search"
-              className="flex-1"
-            />
-            {availEntries.length > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="content_copy"
-                onClick={() => copyText(copyAllValue)}
-              >
-                Copy all
-              </Button>
-            )}
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-brand-500/10 text-brand-500 flex items-center justify-center">
+            <span className="material-symbols-outlined text-xl">hub</span>
           </div>
-          {availModels === null ? (
-            <p className="text-sm text-text-muted py-4 text-center">
-              Loading models…
+          <div className="text-left">
+            <h3 className="text-sm font-semibold text-primary">Smart Combos</h3>
+            <p className="text-[11px] text-text-muted">
+              {combos.length} routing alias{combos.length !== 1 ? "es" : ""} —
+              single name routes to multiple upstream models
             </p>
-          ) : availEntries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-2xl text-text-muted/50 mb-1">
-                search_off
-              </span>
-              <p className="text-sm text-text-muted">
-                No models{availFilter ? " match the filter" : " available"}.
-              </p>
-            </div>
-          ) : (
-            <div className="max-h-[55vh] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {availEntries.map((e, idx) => (
-                <div
-                  key={`${e.display}-${idx}`}
-                  className="group flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-transparent hover:border-border hover:bg-surface-2 transition-all"
-                >
-                  <ModelIcon model={e.model} size={24} />
-                  <div className="flex-1 min-w-0">
-                    <code className="text-xs block truncate font-medium">
-                      {e.display}
-                    </code>
-                    {e.isAlias && (
-                      <div className="text-[10px] text-text-muted truncate">
-                        → {e.model}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => copyText(e.display)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-primary transition-opacity"
-                    title="Copy model"
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[15px]">
-                      content_copy
-                    </span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-text-muted">
-            {availEntries.length} model(s)
-          </p>
+          </div>
         </div>
-      </Modal>
+        <span className="material-symbols-outlined text-text-muted">
+          {expanded ? "expand_less" : "expand_more"}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border-subtle text-text-muted">
+                <th className="text-left py-2 px-2 font-medium">Combo Name</th>
+                <th className="text-center py-2 px-2 font-medium">Members</th>
+                <th className="text-center py-2 px-2 font-medium">Mode</th>
+                <th className="text-left py-2 px-2 font-medium">
+                  Routes To (in order)
+                </th>
+                <th className="text-center py-2 px-2 font-medium">Copy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {combos.map((combo, idx) => {
+                const isFallback = combo.kind === "fallback" || !combo.kind;
+                const models = combo.models || [];
+                const copyValue = models.join("\n");
+                return (
+                  <tr
+                    key={combo.id || idx}
+                    className="border-b border-border-subtle/50 hover:bg-surface-2/50 transition-colors"
+                  >
+                    <td className="py-2.5 px-2">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-brand-500 text-[18px]">
+                          hub
+                        </span>
+                        <code className="font-mono text-xs font-medium">
+                          {combo.name}
+                        </code>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-2 text-center">
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-500/10 text-brand-500 text-[11px] font-medium">
+                        {models.length}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-2 text-center">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                          isFallback
+                            ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
+                            : "bg-blue-500/10 text-blue-500 border-blue-500/30"
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[14px]">
+                          {isFallback ? "arrow_downward" : "sync"}
+                        </span>
+                        {isFallback ? "Fallback" : "Round Robin"}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {models.map((m, mi) => {
+                          const al = aliasesFor(m);
+                          return (
+                            <span
+                              key={mi}
+                              className="inline-flex items-center px-2 py-0.5 rounded bg-surface-2 text-text-main text-[11px] font-mono"
+                              title={
+                                al.length > 0 ? `Aliases: ${al.join(", ")}` : ""
+                              }
+                            >
+                              {bareId(m)}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-2 text-center">
+                      <CopyBtn value={copyValue} title="Copy models" />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ModelsList({ apiKey, origin, aliases = {} }) {
+  const [models, setModels] = useState(null);
+  const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${origin}/v1/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled)
+          setModels(
+            (json?.data || json?.models || [])
+              .map((m) => m.id || m.name)
+              .filter(Boolean),
+          );
+      })
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey, origin]);
+
+  const bareId = (s) => {
+    const str = String(s);
+    const i = str.indexOf("/");
+    return i >= 0 ? str.slice(i + 1) : str;
+  };
+
+  const hasVision = (name) => /vision|vl|multimodal|image/i.test(name);
+  const hasReasoning = (name) => /reason|think|o1|o3|deepseek-r1/i.test(name);
+  const hasTools = (name) => /tool|function|gpt-4|claude|gemini/.test(name);
+  const hasImage = (name) => /image|dall-e|flux|midjourney|stable/i.test(name);
+
+  const filtered = (models || []).filter((m) => {
+    if (!filter) return true;
+    const q = filter.toLowerCase();
+    return m.toLowerCase().includes(q);
+  });
+
+  const visionCount = (models || []).filter((m) => hasVision(m)).length;
+  const reasoningCount = (models || []).filter((m) => hasReasoning(m)).length;
+  const toolsCount = (models || []).filter((m) => hasTools(m)).length;
+  const imageCount = (models || []).filter((m) => hasImage(m)).length;
+
+  return (
+    <Card padding="md">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-medium text-text-muted flex items-center gap-1">
+          <span className="material-symbols-outlined text-[15px]">
+            grid_view
+          </span>
+          Models ({models === null ? "…" : models.length})
+        </span>
+      </div>
+
+      {/* Capabilities summary table */}
+      {models !== null && models.length > 0 && (
+        <div className="mb-3 rounded-lg border border-border-subtle overflow-hidden">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="bg-surface-2 text-text-muted">
+                <th className="text-left py-2 px-3 font-medium">Capability</th>
+                <th className="text-center py-2 px-3 font-medium">Count</th>
+                <th className="text-left py-2 px-3 font-medium">Examples</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {[
+                {
+                  label: "Vision",
+                  icon: "visibility",
+                  count: visionCount,
+                  examples: "GPT-4V, Claude 3 Vision, GLM-4V",
+                },
+                {
+                  label: "Reasoning",
+                  icon: "psychology",
+                  count: reasoningCount,
+                  examples: "o1, o3, DeepSeek-R1, Claude Opus",
+                },
+                {
+                  label: "Tools / Function",
+                  icon: "build",
+                  count: toolsCount,
+                  examples: "GPT-4, Claude 3, Gemini",
+                },
+                {
+                  label: "Image Gen",
+                  icon: "image",
+                  count: imageCount,
+                  examples: "DALL-E, Flux, Stable Diffusion",
+                },
+              ].map((row) => (
+                <tr
+                  key={row.label}
+                  className="hover:bg-surface-2/50 transition-colors"
+                >
+                  <td className="py-2 px-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[14px] text-text-muted">
+                        {row.icon}
+                      </span>
+                      <span className="font-medium">{row.label}</span>
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 text-center">
+                    <span
+                      className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-medium ${
+                        row.count > 0
+                          ? "bg-brand-500/10 text-brand-500"
+                          : "bg-surface-2 text-text-muted"
+                      }`}
+                    >
+                      {row.count}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3 text-text-muted">{row.examples}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Input
+        placeholder="Filter models…"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        icon="search"
+        size="sm"
+        className="mb-2"
+      />
+
+      {models === null ? (
+        <div className="flex items-center justify-center py-4 text-text-muted text-xs">
+          <span className="material-symbols-outlined animate-spin text-[16px] mr-1.5">
+            progress_activity
+          </span>
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-xs text-text-muted text-center py-4">
+          No models match.
+        </p>
+      ) : (
+        <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border-subtle">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-surface-2 text-text-muted">
+              <tr>
+                <th className="text-left py-2 px-3 font-medium">Model</th>
+                <th className="text-center py-2 px-2 font-medium">CAPS</th>
+                <th className="text-center py-2 px-2 font-medium w-10">Copy</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {filtered.map((m, i) => {
+                const bid = bareId(m);
+                const caps = [];
+                if (hasVision(m)) caps.push("v");
+                if (hasReasoning(m)) caps.push("r");
+                if (hasTools(m)) caps.push("t");
+                if (hasImage(m)) caps.push("i");
+                return (
+                  <tr
+                    key={i}
+                    className="hover:bg-surface-2/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      copyText(m);
+                    }}
+                  >
+                    <td className="py-1.5 px-3">
+                      <div className="flex items-center gap-2">
+                        <ModelIcon model={m} size={16} />
+                        <code className="text-[11px] font-mono text-text-main truncate">
+                          {bid}
+                        </code>
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-2 text-center">
+                      {caps.length > 0 ? (
+                        <div className="flex items-center justify-center gap-0.5">
+                          {caps.includes("v") && (
+                            <span
+                              className="w-4 h-4 rounded text-[9px] bg-blue-500/10 text-blue-500 flex items-center justify-center font-medium"
+                              title="Vision"
+                            >
+                              V
+                            </span>
+                          )}
+                          {caps.includes("r") && (
+                            <span
+                              className="w-4 h-4 rounded text-[9px] bg-purple-500/10 text-purple-500 flex items-center justify-center font-medium"
+                              title="Reasoning"
+                            >
+                              R
+                            </span>
+                          )}
+                          {caps.includes("t") && (
+                            <span
+                              className="w-4 h-4 rounded text-[9px] bg-amber-500/10 text-amber-500 flex items-center justify-center font-medium"
+                              title="Tools"
+                            >
+                              T
+                            </span>
+                          )}
+                          {caps.includes("i") && (
+                            <span
+                              className="w-4 h-4 rounded text-[9px] bg-green-500/10 text-green-500 flex items-center justify-center font-medium"
+                              title="Image"
+                            >
+                              I
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-text-muted">—</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 px-2 text-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyText(m);
+                        }}
+                        className="p-1 rounded text-text-muted hover:text-primary transition-colors"
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">
+                          content_copy
+                        </span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[10px] text-text-muted mt-1.5">
+        {filtered.length} of {models?.length || 0} shown
+      </p>
     </Card>
   );
 }

@@ -847,6 +847,62 @@ export async function refreshCodebuddyToken(refreshToken, log) {
   );
 }
 
+// CodeBuddy International (api.codebuddy.ai) — same shape as CN but X-Domain differs.
+export async function refreshCodebuddyIntlToken(refreshToken, log) {
+  if (!refreshToken) return null;
+  return dedupRefresh(
+    "codebuddy",
+    refreshToken,
+    async () => {
+      const oauth = PROVIDER_OAUTH["codebuddy"] || {};
+      const response = await fetch(oauth.refreshUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": oauth.userAgent,
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Domain": "www.codebuddy.ai",
+          "X-Refresh-Token": refreshToken,
+          "X-Auth-Refresh-Source": "plugin",
+          "X-Product": "SaaS",
+        },
+        body: "{}",
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        log?.error?.(
+          "TOKEN_REFRESH",
+          "Failed to refresh CodeBuddy Intl token",
+          {
+            status: response.status,
+            error: errorText,
+          },
+        );
+        return null;
+      }
+
+      const data = await response.json();
+      if (data.code !== 0 || !data.data?.accessToken) {
+        log?.error?.(
+          "TOKEN_REFRESH",
+          "CodeBuddy Intl token refresh returned no token",
+          { code: data.code, msg: data.msg },
+        );
+        return null;
+      }
+
+      return {
+        accessToken: data.data.accessToken,
+        refreshToken: data.data.refreshToken || refreshToken,
+        expiresIn: data.data.expiresIn,
+      };
+    },
+    log,
+  );
+}
+
 /**
  * AutoClaw token refresh.
  *

@@ -128,6 +128,9 @@ export const GITLAB_CONFIG = { ...PROVIDER_OAUTH["gitlab"] };
 // CodeBuddy (Tencent) OAuth Configuration (Browser OAuth Polling Flow)
 export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 
+// CodeBuddy International OAuth Configuration (Browser OAuth Polling Flow)
+export const CODEBUDDY_INTL_CONFIG = { ...PROVIDER_OAUTH["codebuddy"] };
+
 // Kimchi OAuth Configuration (Browser token callback flow)
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
@@ -178,6 +181,7 @@ export const PROVIDERS = {
   CLINE: "cline",
   GITLAB: "gitlab",
   CODEBUDDY: "codebuddy-cn",
+  CODEBUDDY_INTL: "codebuddy",
   KIMCHI: "kimchi",
   AUTOCLOW: "autoclaw",
   LIVSCENE: "livscene",

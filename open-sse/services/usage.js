@@ -8,12 +8,14 @@ import { getClaudeUsage } from "./usage/claude.js";
 import {
   getCodexUsage,
   consumeCodexRateLimitResetCredit,
+  getCodexRateLimitResetCredits,
 } from "./usage/codex.js";
 
-export { consumeCodexRateLimitResetCredit };
+export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits };
 import { getKiroUsage } from "./usage/kiro.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
 import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
+import { getCodeBuddyUsage } from "./usage/codebuddy.js";
 import {
   getQwenUsage,
   getIflowUsage,
@@ -53,6 +55,13 @@ const USAGE_HANDLERS = {
   "vercel-ai-gateway": (c) => getVercelAiGatewayUsage(c.apiKey, c.proxyOptions),
   "codebuddy-cn": (c) =>
     getCodeBuddyCnUsage(
+      c.accessToken,
+      c.apiKey,
+      c.providerSpecificData,
+      c.proxyOptions,
+    ),
+  codebuddy: (c) =>
+    getCodeBuddyUsage(
       c.accessToken,
       c.apiKey,
       c.providerSpecificData,

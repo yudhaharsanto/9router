@@ -46,7 +46,8 @@ function applyAuth(headers, desc, credentials) {
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
-  kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
+  kimiHeaders: (h, c) =>
+    Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   clineHeaders: (h, c) =>
     Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => {
@@ -301,7 +302,12 @@ export class DefaultExecutor extends BaseExecutor {
       gemini: () => this.refreshFromGrant(credentials, proxyOptions),
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
       cline: () => this.refreshCline(credentials.refreshToken, proxyOptions),
-      clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
+      clinepass: () =>
+        this.refreshCline(credentials.refreshToken, proxyOptions),
+      "codebuddy-cn": () =>
+        this.refreshCodebuddy(credentials.refreshToken, proxyOptions),
+      codebuddy: () =>
+        this.refreshCodebuddyIntl(credentials.refreshToken, proxyOptions),
       kimi: () => this.refreshKimi(credentials, proxyOptions),
       "kimi-coding": () => this.refreshKimi(credentials, proxyOptions),
       kilocode: () =>
@@ -446,32 +452,54 @@ export class DefaultExecutor extends BaseExecutor {
           Math.floor((new Date(expiresAtIso).getTime() - Date.now()) / 1000),
         )
       : undefined;
+    let accessToken = data?.accessToken;
+    if (accessToken && !accessToken.startsWith("workos:")) {
+      accessToken = `workos:${accessToken}`;
+    }
     return {
-      accessToken: data?.accessToken,
+      accessToken,
       refreshToken: data?.refreshToken || refreshToken,
       expiresIn,
     };
   }
 
-// CLIProxyAPI DeviceFlowClient.RefreshToken — form body + X-Msh-* headers + stable device_id
+  async refreshCodebuddy(refreshToken, proxyOptions = null) {
+    const { refreshCodebuddyToken } =
+      await import("../services/tokenRefresh/providers.js");
+    return refreshCodebuddyToken(refreshToken);
+  }
+
+  async refreshCodebuddyIntl(refreshToken, proxyOptions = null) {
+    const { refreshCodebuddyIntlToken } =
+      await import("../services/tokenRefresh/providers.js");
+    return refreshCodebuddyIntlToken(refreshToken);
+  }
+
+  // CLIProxyAPI DeviceFlowClient.RefreshToken — form body + X-Msh-* headers + stable device_id
   async refreshKimi(credentials, proxyOptions = null) {
     const refreshToken = credentials.refreshToken;
     const cfg = PROVIDERS.kimi || PROVIDERS["kimi-coding"];
     if (!cfg?.refreshUrl || !cfg?.clientId) return null;
-    const kimiHeaders = buildKimiHeaders(credentials?.providerSpecificData?.deviceId);
-    const response = await proxyAwareFetch(cfg.refreshUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-        ...kimiHeaders,
+    const kimiHeaders = buildKimiHeaders(
+      credentials?.providerSpecificData?.deviceId,
+    );
+    const response = await proxyAwareFetch(
+      cfg.refreshUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          ...kimiHeaders,
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: cfg.clientId,
+        }),
       },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: cfg.clientId,
-      }),
-    }, proxyOptions);
+      proxyOptions,
+    );
     if (!response.ok) return null;
     const tokens = await response.json();
     return {

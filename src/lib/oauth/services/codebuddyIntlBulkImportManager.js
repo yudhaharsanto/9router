@@ -548,6 +548,8 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 15000);
             try {
+              // APISIX gateway requires Origin + Referer for auth.
+              // Pull cookies from document.cookie so session is attached.
               const resp = await fetch(
                 "https://www.codebuddy.ai/console/api/client/v1/api-keys",
                 {
@@ -555,6 +557,8 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
                   headers: {
                     Accept: "application/json, text/plain, */*",
                     "Content-Type": "application/json",
+                    Origin: "https://www.codebuddy.ai",
+                    Referer: "https://www.codebuddy.ai/profile/keys",
                   },
                   credentials: "include",
                   signal: controller.signal,
@@ -591,6 +595,21 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
               await page.waitForTimeout(2000);
               continue;
             }
+          }
+          // 401 = APISIX gateway auth failure. Session may have expired
+          // or headers missing. Re-navigate to refresh cookies, then retry.
+          if (createResult.status === 401) {
+            console.warn(
+              `[codebuddy-bulk] ${account.email} 401 from APISIX, re-navigating to refresh session...`,
+            );
+            await page
+              .goto("https://www.codebuddy.ai/profile/keys", {
+                waitUntil: "domcontentloaded",
+                timeout: 30_000,
+              })
+              .catch(() => {});
+            await page.waitForTimeout(2000);
+            continue;
           }
           break;
         } catch (evalError) {

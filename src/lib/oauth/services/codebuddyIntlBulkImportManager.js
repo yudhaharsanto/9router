@@ -530,6 +530,76 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       clearInterval(urlPollInterval);
       _checkCancel();
 
+      // Post-Google handler: if Keycloak sent us back to /login (or a Sign-up
+      // page) instead of /home, the Google account is not yet linked to a
+      // CodeBuddy account. Try clicking "Sign up with Google" once to
+      // register the account, then wait for /home.
+      try {
+        const postUrl = page.url();
+        const onLoginOrSignup =
+          postUrl.includes("www.codebuddy.ai") &&
+          !/\/home(\b|\/|\?|#|$)/.test(postUrl);
+        if (onLoginOrSignup) {
+          this.setAccountStep(
+            account,
+            "codebuddy_signup",
+            "CodeBuddy sign-up page detected, registering account",
+          );
+          await this.persistJobSnapshot(job, { forcePreview: true });
+
+          // Try to click "Sign up" tab first (if present) then Google button.
+          const signupTabSelectors = [
+            "button:has-text('Sign up')",
+            "a:has-text('Sign up')",
+            "[role='tab']:has-text('Sign up')",
+          ];
+          for (const sel of signupTabSelectors) {
+            try {
+              const el = await page.$(sel);
+              if (el) {
+                await el.click({ timeout: 2000 }).catch(() => {});
+                break;
+              }
+            } catch {}
+          }
+
+          const signupGoogleSelectors = [
+            "button:has-text('Sign up with Google')",
+            "a:has-text('Sign up with Google')",
+            "button:has-text('Continue with Google')",
+            "a:has-text('Continue with Google')",
+            "#social-google",
+            "a[href*='broker/google']",
+          ];
+          let clicked = false;
+          for (const sel of signupGoogleSelectors) {
+            try {
+              const el = await page.$(sel);
+              if (el) {
+                await el.click({ timeout: 3000 }).catch(() => {});
+                clicked = true;
+                break;
+              }
+            } catch {}
+          }
+
+          if (clicked) {
+            // Wait until we reach /home or bail after ~30s.
+            const deadline = Date.now() + 30_000;
+            while (Date.now() < deadline) {
+              _checkCancel();
+              const u = page.url();
+              if (/www\.codebuddy\.ai\/home(\b|\/|\?|#|$)/.test(u)) break;
+              await page.waitForTimeout(500);
+            }
+          }
+        }
+      } catch (signupErr) {
+        console.log(
+          `[codebuddy-bulk] ${account.email} signup handler error: ${signupErr?.message || signupErr}`,
+        );
+      }
+
       // Verify we're back on codebuddy.ai
       const currentUrl = page.url();
       if (!currentUrl.includes("www.codebuddy.ai")) {

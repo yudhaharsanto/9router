@@ -526,31 +526,98 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
         .map((c) => `${c.name}=${c.value}`)
         .join("; ");
 
-      // Step 4: Create API key via POST
+      // Step 4: Create API key via POST.
+      // Key name must be unique — CodeBuddy rejects duplicate names.
+      // Use a per-account suffix derived from email to avoid collisions.
+      // The page.evaluate runs in browser context; if the SPA navigates
+      // mid-request (e.g. on error), the context is destroyed. Retry once
+      // by re-navigating to /profile/keys.
       this.setAccountStep(account, "creating_key", "Creating API key");
       await this.persistJobSnapshot(job, { forcePreview: true });
       _checkCancel();
 
-      const createResult = await page.evaluate(async () => {
-        const resp = await fetch(
-          "https://www.codebuddy.ai/console/api/client/v1/api-keys",
-          {
-            method: "POST",
-            headers: {
-              Accept: "application/json, text/plain, */*",
-              "Content-Type": "application/json",
-            },
-            credentials: "include",
-            body: JSON.stringify({
-              name: "9r",
-              expire_in_days: 365,
-              user_enterprise_id: "personal-edition-user-id",
-            }),
-          },
-        );
-        return { status: resp.status, text: await resp.text() };
-      });
-      _checkCancel();
+      const rand = () => Math.random().toString(36).slice(2, 10);
+      const baseKeyName = `9r-${rand()}`;
+
+      let createResult = null;
+      let currentKeyName = baseKeyName;
+      for (let keyAttempt = 0; keyAttempt < 4; keyAttempt++) {
+        _checkCancel();
+        try {
+          createResult = await page.evaluate(async (name) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 15000);
+            try {
+              const resp = await fetch(
+                "https://www.codebuddy.ai/console/api/client/v1/api-keys",
+                {
+                  method: "POST",
+                  headers: {
+                    Accept: "application/json, text/plain, */*",
+                    "Content-Type": "application/json",
+                  },
+                  credentials: "include",
+                  signal: controller.signal,
+                  body: JSON.stringify({
+                    name,
+                    expire_in_days: 365,
+                    user_enterprise_id: "personal-edition-user-id",
+                  }),
+                },
+              );
+              const text = await resp.text();
+              return { status: resp.status, text };
+            } finally {
+              clearTimeout(timer);
+            }
+          }, currentKeyName);
+          _checkCancel();
+
+          // 12502 = name collision. Check raw text (JSON parse may fail
+          // if SPA injects HTML instead of JSON into the response).
+          if (createResult.status === 400 || createResult.status === 409) {
+            const raw = createResult.text || "";
+            if (/12502|name\s*exists/i.test(raw)) {
+              console.warn(
+                `[codebuddy-bulk] ${account.email} key "${currentKeyName}" exists, retry random...`,
+              );
+              currentKeyName = `9r-${rand()}`;
+              await page
+                .goto("https://www.codebuddy.ai/profile/keys", {
+                  waitUntil: "domcontentloaded",
+                  timeout: 30_000,
+                })
+                .catch(() => {});
+              await page.waitForTimeout(2000);
+              continue;
+            }
+          }
+          break;
+        } catch (evalError) {
+          const msg = String(evalError.message || "");
+          if (
+            keyAttempt < 2 &&
+            /execution context was destroyed|navigation|networkerror/i.test(msg)
+          ) {
+            console.warn(
+              `[codebuddy-bulk] ${account.email} evaluate crashed (${msg.slice(0, 80)}), re-navigating...`,
+            );
+            await page
+              .goto("https://www.codebuddy.ai/profile/keys", {
+                waitUntil: "domcontentloaded",
+                timeout: 30_000,
+              })
+              .catch(() => {});
+            await page.waitForTimeout(2000);
+            continue;
+          }
+          throw evalError;
+        }
+      }
+
+      if (!createResult) {
+        throw new Error("Failed to create API key — evaluate context lost");
+      }
 
       if (createResult.status !== 200 && createResult.status !== 201) {
         throw new Error(

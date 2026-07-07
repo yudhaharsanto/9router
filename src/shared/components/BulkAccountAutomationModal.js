@@ -521,6 +521,26 @@ export default function BulkAccountAutomationModal({
     }
   };
 
+  const handleRetryWorker = async (workerId) => {
+    if (!activeJob?.jobId || !workerId) return;
+
+    try {
+      const res = await fetch(
+        `/api/oauth/${provider}/bulk-import/${activeJob.jobId}/retry`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workerId }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to retry worker");
+      if (data.job) setActiveJob(data.job);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleDoneRefresh = () => {
     resetState();
     onSuccess?.();
@@ -871,9 +891,28 @@ export default function BulkAccountAutomationModal({
                                     {p.email}
                                     {p.workerId ? ` | W${p.workerId}` : ""}
                                   </span>
-                                  <span className="shrink-0 text-[10px] text-white/40">
-                                    {formatStepLabel(p.step)}
-                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    {(p.status === "failed" ||
+                                      p.status === "cancelled") &&
+                                      p.workerId && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleRetryWorker(p.workerId)
+                                          }
+                                          className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-amber-300 hover:bg-white/10"
+                                          title="Retry this worker"
+                                        >
+                                          <span className="material-symbols-outlined text-[11px]">
+                                            replay
+                                          </span>
+                                          retry
+                                        </button>
+                                      )}
+                                    <span className="shrink-0 text-[10px] text-white/40">
+                                      {formatStepLabel(p.step)}
+                                    </span>
+                                  </div>
                                 </div>
                                 {p.imageData ? (
                                   <Image

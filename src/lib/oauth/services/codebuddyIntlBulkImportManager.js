@@ -36,16 +36,89 @@ async function defaultSaveCodeBuddyConnection({
 }
 
 /**
+ * Bypass Keycloak first-broker-login / review-profile / update-profile page.
+ *
+ * Ketika akun Google baru pertama kali login via broker Keycloak,
+ * Keycloak render form konfirmasi (email, first name, last name) yang
+ * harus disubmit manual. Auto-isi field kosong + klik submit supaya
+ * session ter-establish. Tanpa ini, cookie session tak lengkap dan
+ * APISIX gateway return 401 saat POST /api-keys.
+ *
+ * ponytail: skipped: handle IDP-review dgn "add to existing" branch,
+ * add when Keycloak versi baru pisah button submit/link.
+ */
+async function handleKeycloakFirstBrokerLogin(page, account) {
+  // Tunggu form ke-render.
+  try {
+    await page.waitForSelector("form", { timeout: 8_000 });
+  } catch {
+    return;
+  }
+
+  // Isi field yang kosong: email, firstName, lastName, username.
+  const emailPrefix = String(account.email || "").split("@")[0] || "user";
+  const guessedFirst = emailPrefix.replace(/[^a-zA-Z]/g, "") || "User";
+  const guessedLast = "Account";
+  const fieldMap = [
+    ["#email", account.email],
+    ["input[name=email]", account.email],
+    ["#firstName", guessedFirst],
+    ["input[name=firstName]", guessedFirst],
+    ["#lastName", guessedLast],
+    ["input[name=lastName]", guessedLast],
+    ["#username", emailPrefix],
+    ["input[name=username]", emailPrefix],
+  ];
+  for (const [sel, val] of fieldMap) {
+    try {
+      const el = await page.$(sel);
+      if (!el) continue;
+      const current = await el.inputValue().catch(() => "");
+      if (!current) {
+        await el.fill(String(val));
+      }
+    } catch {}
+  }
+
+  // Klik submit — coba beberapa selector umum Keycloak.
+  const submitSelectors = [
+    "#kc-submit",
+    'input[type="submit"][name="submitAction"][value*="Add" i]',
+    'input[type="submit"][name="submitAction"]',
+    "button#kc-submit",
+    'button[type="submit"]',
+    'input[type="submit"]',
+  ];
+  for (const sel of submitSelectors) {
+    try {
+      const btn = await page.$(sel);
+      if (btn) {
+        await btn.click({ timeout: 3_000 });
+        return;
+      }
+    } catch {}
+  }
+  // Fallback: submit form pertama via JS.
+  try {
+    await page.evaluate(() => {
+      const f = document.querySelector("form");
+      if (f) f.submit();
+    });
+  } catch {}
+}
+
+/**
  * CodeBuddy International bulk import manager.
  *
  * Flow per account:
  *   1. Navigate to codebuddy.ai login page, click Google sign-in
  *   2. Google login (email → password → consent)
- *   3. Wait for redirect back to codebuddy.ai
- *   4. Navigate to /profile/keys
- *   5. POST /console/api/client/v1/api-keys to create API key
- *   6. Extract key from response
- *   7. Save connection with API key
+ *   3. Handle Keycloak first-broker-login (if shown) — auto-submit form
+ *   4. Wait for redirect back to codebuddy.ai
+ *   5. Navigate to /profile/keys
+ *   6. POST /console/api/client/v1/api-keys to create API key
+ *   7. Extract key from response
+ *   8. Save connection with API key
  */
 export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
   constructor({
@@ -445,6 +518,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       successPromise.catch(() => {});
 
       let cbHits = 0;
+      let firstBrokerLoginHandled = false;
       const urlPollInterval = setInterval(() => {
         try {
           if (job.cancelRequested) {
@@ -453,9 +527,26 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
             return;
           }
           const url = page.url();
+          const onKeycloak = /\/auth\/realms\/[^/]+\//i.test(url);
+          // First-broker-login page = Keycloak minta konfirmasi link akun
+          // Google ke existing / new CodeBuddy user. Auto-submit form
+          // supaya session lanjut, bukan bail.
+          if (
+            /first-broker-login|review-profile|update-profile/i.test(url) &&
+            !firstBrokerLoginHandled
+          ) {
+            firstBrokerLoginHandled = true;
+            void handleKeycloakFirstBrokerLogin(page, account).catch((e) => {
+              console.warn(
+                `[codebuddy-bulk] ${account.email} first-broker-login submit failed: ${e.message}`,
+              );
+            });
+            return;
+          }
           if (
             url.includes("www.codebuddy.ai") &&
-            !url.includes("accounts.google.com")
+            !url.includes("accounts.google.com") &&
+            !onKeycloak
           ) {
             cbHits++;
             if (cbHits >= 2) {
@@ -489,34 +580,143 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       clearInterval(urlPollInterval);
       _checkCancel();
 
+      // Kalau masih stuck di Keycloak setelah automation loop selesai,
+      // coba submit form first-broker-login satu kali lagi (sync) supaya
+      // session lengkap sebelum lanjut buka /profile/keys.
+      try {
+        const curUrl = page.url();
+        if (
+          /\/auth\/realms\/[^/]+\/login-actions\/(first-broker-login|review-profile|update-profile)/i.test(
+            curUrl,
+          )
+        ) {
+          console.log(
+            `[codebuddy-bulk] ${account.email} still on Keycloak (${curUrl.slice(0, 100)}), attempting bypass...`,
+          );
+          await handleKeycloakFirstBrokerLogin(page, account);
+          // Tunggu redirect balik ke codebuddy home.
+          for (let i = 0; i < 30; i++) {
+            const u = page.url();
+            if (u.includes("www.codebuddy.ai") && !/\/auth\/realms\//i.test(u))
+              break;
+            await page.waitForTimeout(500);
+          }
+        }
+      } catch (e) {
+        console.warn(
+          `[codebuddy-bulk] ${account.email} keycloak bypass error: ${e.message}`,
+        );
+      }
+
       // Verify we're back on codebuddy.ai
       const currentUrl = page.url();
-      if (!currentUrl.includes("www.codebuddy.ai")) {
+      const isKeycloakStuck =
+        /\/auth\/realms\/[^/]+\/(login-actions|protocol)\//i.test(currentUrl);
+      if (!currentUrl.includes("www.codebuddy.ai") || isKeycloakStuck) {
         const shortUrl =
           currentUrl.length > 80 ? currentUrl.slice(0, 80) + "..." : currentUrl;
         const isGoogleStuck = currentUrl.includes("accounts.google.com");
-        throw new Error(
-          isGoogleStuck
-            ? `Google OAuth stuck (likely proxy/anti-bot). URL: ${shortUrl}`
-            : `Did not redirect to CodeBuddy. URL: ${shortUrl}`,
+        const isFirstBrokerLogin = /first-broker-login/i.test(currentUrl);
+        // Keycloak restrict page: "Account Access Restricted" / "Invalid
+        // username or password" / first-broker-login (akun tak bisa
+        // auto-link, biasanya email conflict / restricted).
+        let pageBody = "";
+        try {
+          pageBody = await page.evaluate(
+            () => document.body?.innerText?.slice(0, 500) || "",
+          );
+        } catch {}
+        const isRestricted =
+          /account\s*access\s*restricted|invalid\s*username\s*or\s*password/i.test(
+            pageBody,
+          );
+        const permanent = isRestricted || isFirstBrokerLogin;
+        const err = new Error(
+          isFirstBrokerLogin
+            ? `Keycloak first-broker-login stuck (akun perlu manual link/verify)`
+            : isRestricted
+              ? `Account restricted by CodeBuddy (Keycloak blocked login)`
+              : isGoogleStuck
+                ? `Google OAuth stuck (likely proxy/anti-bot). URL: ${shortUrl}`
+                : `Did not redirect to CodeBuddy. URL: ${shortUrl}`,
         );
+        if (permanent) err.permanent = true;
+        throw err;
       }
 
       // Wait for session to fully initialize
       await page.waitForTimeout(3000);
       _checkCancel();
 
+      // Double-check: kadang URL sudah www.codebuddy.ai tapi halaman
+      // sebenarnya redirect ke Keycloak restrict / first-broker-login page
+      // (iframe / late nav).
+      try {
+        const nowUrl = page.url();
+        if (
+          /\/auth\/realms\/[^/]+\/login-actions\/first-broker-login/i.test(
+            nowUrl,
+          )
+        ) {
+          const err = new Error(
+            "Keycloak first-broker-login stuck (akun perlu manual link/verify)",
+          );
+          err.permanent = true;
+          throw err;
+        }
+        const bodyText = await page.evaluate(
+          () => document.body?.innerText?.slice(0, 500) || "",
+        );
+        if (
+          /account\s*access\s*restricted|invalid\s*username\s*or\s*password|first[\s-]?broker[\s-]?login/i.test(
+            bodyText,
+          )
+        ) {
+          const err = new Error(
+            "Account restricted / first-broker-login (Keycloak blocked login)",
+          );
+          err.permanent = true;
+          throw err;
+        }
+      } catch (e) {
+        if (e?.permanent) throw e;
+      }
+
       // Step 3: Navigate to profile/keys page
       this.setAccountStep(account, "opening_keys", "Opening API keys page");
       await this.persistJobSnapshot(job, { forcePreview: true });
       _checkCancel();
+
+      // Sniff auth headers the SPA sends to /api-keys. APISIX gateway
+      // requires the same header set the SPA uses (often Authorization
+      // Bearer from localStorage, or custom X-* headers). Attach listener
+      // BEFORE navigation so we catch the SPA's own GET on mount.
+      let sniffedHeaders = null;
+      const sniffHandler = (req) => {
+        try {
+          const url = req.url();
+          if (
+            url.includes("/console/api/client/v1/api-keys") &&
+            !sniffedHeaders
+          ) {
+            sniffedHeaders = req.headers();
+          }
+        } catch {}
+      };
+      page.on("request", sniffHandler);
 
       await page.goto("https://www.codebuddy.ai/profile/keys", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
       _checkCancel();
-      await page.waitForTimeout(2000);
+
+      // Give SPA up to 8s to fire its own /api-keys request so we can
+      // capture the auth headers.
+      for (let i = 0; i < 16 && !sniffedHeaders; i++) {
+        await page.waitForTimeout(500);
+      }
+      page.off("request", sniffHandler);
       _checkCancel();
 
       // Capture session cookies
@@ -526,55 +726,120 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
         .map((c) => `${c.name}=${c.value}`)
         .join("; ");
 
+      if (sniffedHeaders) {
+        const preview = Object.keys(sniffedHeaders)
+          .filter((k) => /auth|token|key|x-/i.test(k))
+          .join(",");
+        console.log(
+          `[codebuddy-bulk] ${account.email} sniffed SPA headers: ${preview || "none"}`,
+        );
+      } else {
+        console.warn(
+          `[codebuddy-bulk] ${account.email} could not sniff SPA request — falling back to cookie-only auth`,
+        );
+      }
+
       // Step 4: Create API key via POST.
-      // Key name must be unique — CodeBuddy rejects duplicate names.
-      // Use a per-account suffix derived from email to avoid collisions.
-      // The page.evaluate runs in browser context; if the SPA navigates
-      // mid-request (e.g. on error), the context is destroyed. Retry once
-      // by re-navigating to /profile/keys.
+      // Bypass browser context (page.evaluate) — hindari risiko RCE +
+      // execution-context-destroyed. Panggil endpoint langsung dari Node
+      // pakai Playwright request context (share cookies + proxy dari
+      // context yang sudah login) + sniffed SPA headers + bearer token
+      // yang di-baca sekali dari localStorage.
       this.setAccountStep(account, "creating_key", "Creating API key");
       await this.persistJobSnapshot(job, { forcePreview: true });
       _checkCancel();
 
+      // Baca bearer token dari localStorage/sessionStorage sekali saja
+      // (read-only, no dynamic string eval — aman dari RCE).
+      let storageToken = null;
+      try {
+        storageToken = await page.evaluate(() => {
+          try {
+            for (const store of [localStorage, sessionStorage]) {
+              for (let i = 0; i < store.length; i++) {
+                const k = store.key(i);
+                const v = store.getItem(k);
+                if (!v) continue;
+                if (/^ey[A-Za-z0-9_-]+\./.test(v)) return v;
+                if (v.startsWith("{")) {
+                  try {
+                    const j = JSON.parse(v);
+                    const t =
+                      j?.token ||
+                      j?.access_token ||
+                      j?.accessToken ||
+                      j?.jwt ||
+                      j?.data?.token ||
+                      j?.data?.access_token ||
+                      null;
+                    if (t) return t;
+                  } catch {}
+                }
+              }
+            }
+          } catch {}
+          return null;
+        });
+      } catch {}
+
       const rand = () => Math.random().toString(36).slice(2, 10);
       const baseKeyName = `9r-${rand()}`;
+
+      // Build header set dari sniff + fallback + bearer.
+      const buildHeaders = () => {
+        const headers = {
+          Accept: "application/json, text/plain, */*",
+          "Content-Type": "application/json",
+          Origin: "https://www.codebuddy.ai",
+          Referer: "https://www.codebuddy.ai/profile/keys",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
+        };
+        if (sniffedHeaders) {
+          for (const [k, v] of Object.entries(sniffedHeaders)) {
+            const lk = k.toLowerCase();
+            if (
+              lk === "host" ||
+              lk === "content-length" ||
+              lk === "connection" ||
+              lk === "accept-encoding" ||
+              lk.startsWith(":")
+            )
+              continue;
+            headers[k] = v;
+          }
+        }
+        if (storageToken && !headers.Authorization && !headers.authorization) {
+          headers.Authorization = `Bearer ${storageToken}`;
+        }
+        return headers;
+      };
 
       let createResult = null;
       let currentKeyName = baseKeyName;
       for (let keyAttempt = 0; keyAttempt < 4; keyAttempt++) {
         _checkCancel();
         try {
-          createResult = await page.evaluate(async (name) => {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 15000);
-            try {
-              // APISIX gateway requires Origin + Referer for auth.
-              // Pull cookies from document.cookie so session is attached.
-              const resp = await fetch(
-                "https://www.codebuddy.ai/console/api/client/v1/api-keys",
-                {
-                  method: "POST",
-                  headers: {
-                    Accept: "application/json, text/plain, */*",
-                    "Content-Type": "application/json",
-                    Origin: "https://www.codebuddy.ai",
-                    Referer: "https://www.codebuddy.ai/profile/keys",
-                  },
-                  credentials: "include",
-                  signal: controller.signal,
-                  body: JSON.stringify({
-                    name,
-                    expire_in_days: 365,
-                    user_enterprise_id: "personal-edition-user-id",
-                  }),
-                },
-              );
-              const text = await resp.text();
-              return { status: resp.status, text };
-            } finally {
-              clearTimeout(timer);
-            }
-          }, currentKeyName);
+          const headers = buildHeaders();
+          // context.request share cookies + proxy dari browser context.
+          const resp = await context.request.post(
+            "https://www.codebuddy.ai/console/api/client/v1/api-keys",
+            {
+              headers,
+              data: {
+                name: currentKeyName,
+                expire_in_days: 365,
+                user_enterprise_id: "personal-edition-user-id",
+              },
+              timeout: 20_000,
+            },
+          );
+          const text = await resp.text();
+          createResult = {
+            status: resp.status(),
+            text,
+            usedAuth: !!(headers.Authorization || headers.authorization),
+          };
           _checkCancel();
 
           // 12502 = name collision. Check raw text (JSON parse may fail
@@ -596,46 +861,119 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
               continue;
             }
           }
-          // 401 = APISIX gateway auth failure. Session may have expired
-          // or headers missing. Re-navigate to refresh cookies, then retry.
+          // 401 = APISIX gateway auth failure. Kalau body-nya HTML APISIX
+          // ("openresty" / "Authorization Required"), biasanya karena akun
+          // di-restrict Keycloak — session cookies tak valid untuk console
+          // API. Cek juga halaman untuk restrict banner: kalau ketemu,
+          // gagal permanen, no retry.
           if (createResult.status === 401) {
+            const raw401 = createResult.text || "";
+            const isApisixHtml =
+              /openresty|apache\s*apisix|authorization\s*required/i.test(
+                raw401,
+              );
+            let restrictedBody = "";
+            try {
+              restrictedBody = await page.evaluate(
+                () => document.body?.innerText?.slice(0, 500) || "",
+              );
+            } catch {}
+            if (
+              /account\s*access\s*restricted|invalid\s*username\s*or\s*password/i.test(
+                restrictedBody,
+              )
+            ) {
+              const err = new Error(
+                "Account restricted by CodeBuddy (401 + restrict banner)",
+              );
+              err.permanent = true;
+              throw err;
+            }
+            // Setelah 2 kali 401 dengan APISIX HTML → anggap akun restricted.
+            if (isApisixHtml && keyAttempt >= 1) {
+              const err = new Error(
+                `Account likely restricted — APISIX 401 persists after retry`,
+              );
+              err.permanent = true;
+              throw err;
+            }
             console.warn(
-              `[codebuddy-bulk] ${account.email} 401 from APISIX, re-navigating to refresh session...`,
+              `[codebuddy-bulk] ${account.email} 401 from APISIX (usedAuth=${createResult.usedAuth}, attempt=${keyAttempt + 1}), refreshing session...`,
             );
+            sniffedHeaders = null;
+            const reSniff = (req) => {
+              try {
+                if (
+                  req.url().includes("/console/api/client/v1/api-keys") &&
+                  !sniffedHeaders
+                ) {
+                  sniffedHeaders = req.headers();
+                }
+              } catch {}
+            };
+            page.on("request", reSniff);
             await page
               .goto("https://www.codebuddy.ai/profile/keys", {
                 waitUntil: "domcontentloaded",
                 timeout: 30_000,
               })
               .catch(() => {});
-            await page.waitForTimeout(2000);
+            for (let i = 0; i < 16 && !sniffedHeaders; i++) {
+              await page.waitForTimeout(500);
+            }
+            page.off("request", reSniff);
+            // Re-baca bearer token (mungkin sudah rotate).
+            try {
+              storageToken = await page.evaluate(() => {
+                try {
+                  for (const store of [localStorage, sessionStorage]) {
+                    for (let i = 0; i < store.length; i++) {
+                      const k = store.key(i);
+                      const v = store.getItem(k);
+                      if (!v) continue;
+                      if (/^ey[A-Za-z0-9_-]+\./.test(v)) return v;
+                      if (v.startsWith("{")) {
+                        try {
+                          const j = JSON.parse(v);
+                          const t =
+                            j?.token ||
+                            j?.access_token ||
+                            j?.accessToken ||
+                            j?.jwt ||
+                            j?.data?.token ||
+                            j?.data?.access_token ||
+                            null;
+                          if (t) return t;
+                        } catch {}
+                      }
+                    }
+                  }
+                } catch {}
+                return null;
+              });
+            } catch {}
             continue;
           }
           break;
-        } catch (evalError) {
-          const msg = String(evalError.message || "");
+        } catch (reqError) {
+          if (reqError?.permanent) throw reqError;
+          const msg = String(reqError.message || "");
           if (
             keyAttempt < 2 &&
-            /execution context was destroyed|navigation|networkerror/i.test(msg)
+            /timeout|network|econnreset|socket|abort/i.test(msg)
           ) {
             console.warn(
-              `[codebuddy-bulk] ${account.email} evaluate crashed (${msg.slice(0, 80)}), re-navigating...`,
+              `[codebuddy-bulk] ${account.email} request failed (${msg.slice(0, 80)}), retrying...`,
             );
-            await page
-              .goto("https://www.codebuddy.ai/profile/keys", {
-                waitUntil: "domcontentloaded",
-                timeout: 30_000,
-              })
-              .catch(() => {});
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(1500);
             continue;
           }
-          throw evalError;
+          throw reqError;
         }
       }
 
       if (!createResult) {
-        throw new Error("Failed to create API key — evaluate context lost");
+        throw new Error("Failed to create API key — no response after retries");
       }
 
       if (createResult.status !== 200 && createResult.status !== 201) {
@@ -693,6 +1031,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       const isCancel = job.cancelRequested || error.message === "__CANCEL__";
       const isRetryable =
         !isCancel &&
+        !error?.permanent &&
         attempt < maxAttempts &&
         this._isRetryableProxyError(error);
 

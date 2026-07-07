@@ -82,27 +82,42 @@ async function launchCamoufox({ proxyUrl, headless = true } = {}) {
     delete launchOptions.contextOptions.hasTouch;
   }
 
-  // HTTP/2 + connection reuse tuning. Ketika lewat proxy residential, tiap
-  // request baru bikin TLS handshake mahal. Prefs ini paksa Firefox reuse
-  // koneksi persistent ke proxy + Google + Keycloak, kurangi round-trip.
-  // ponytail: skipped: per-host tuning, tambah kalau host spesifik butuh
-  // pool lebih besar.
+  // Proxy tuning. Residential proxies umumnya HTTP/1.1 saja — kalau Firefox
+  // pakai HTTP/2/3 lewat CONNECT tunnel, banyak proxy stall karena tak bisa
+  // multiplex atau tak support ALPN passthrough. Paksa HTTP/1.1 dan turunkan
+  // parallel connection biar proxy tak thrash. Keep-alive panjang supaya
+  // TLS handshake ke origin tak diulang tiap request.
+  // ponytail: skipped: per-host tuning, tambah kalau proxy spesifik dukung H2.
   launchOptions.firefoxUserPrefs = {
     ...(launchOptions.firefoxUserPrefs || {}),
-    "network.http.http2.enabled": true,
-    "network.http.http2.enabled.deps": true,
-    "network.http.http3.enable": true,
+    // Disable HTTP/2 + HTTP/3 — sebagian besar residential proxy hanya
+    // tunnel TCP + tak advertise ALPN dengan benar, bikin request stuck.
+    "network.http.http2.enabled": false,
+    "network.http.http2.enabled.deps": false,
+    "network.http.http3.enable": false,
+    "network.http.http3.enabled": false,
+    "network.http.spdy.enabled": false,
+    "network.http.spdy.enabled.http2": false,
+    // Keep-alive lama supaya reuse socket ke origin lewat proxy.
     "network.http.keep-alive.timeout": 600,
-    "network.http.max-persistent-connections-per-server": 10,
-    "network.http.max-persistent-connections-per-proxy": 64,
-    "network.http.max-connections": 900,
-    "network.http.connection-timeout": 30,
-    "network.http.response.timeout": 60,
-    // Speculative connect memanaskan socket ke host yang dihover / diprefetch.
-    "network.http.speculative-parallel-limit": 10,
-    "network.dns.disablePrefetch": false,
-    "network.predictor.enabled": true,
-    "network.predictor.enable-prefetch": true,
+    "network.http.keep-alive": true,
+    // Turunkan concurrency — proxy residential biasanya throttle di >6
+    // koneksi paralel per host.
+    "network.http.max-persistent-connections-per-server": 6,
+    "network.http.max-persistent-connections-per-proxy": 32,
+    "network.http.max-connections": 256,
+    "network.http.connection-timeout": 90,
+    "network.http.response.timeout": 120,
+    "network.http.connection-retry-timeout": 250,
+    // Matikan speculative connect — bikin proxy dibanjiri handshake
+    // yang tak kepakai + kena rate-limit.
+    "network.http.speculative-parallel-limit": 0,
+    "network.dns.disablePrefetch": true,
+    "network.predictor.enabled": false,
+    "network.predictor.enable-prefetch": false,
+    "network.prefetch-next": false,
+    // DNS lewat proxy (bukan lokal) supaya route konsisten.
+    "network.proxy.socks_remote_dns": true,
     // Kurangi telemetri background yang buang bandwidth proxy.
     "toolkit.telemetry.enabled": false,
     "toolkit.telemetry.unified": false,
@@ -110,6 +125,13 @@ async function launchCamoufox({ proxyUrl, headless = true } = {}) {
     "app.normandy.enabled": false,
     "browser.discovery.enabled": false,
     "browser.newtabpage.activity-stream.feeds.telemetry": false,
+    "browser.safebrowsing.downloads.enabled": false,
+    "browser.safebrowsing.malware.enabled": false,
+    "browser.safebrowsing.phishing.enabled": false,
+    // Matikan captive portal check + Firefox background pings yang
+    // buang round-trip lewat proxy.
+    "network.captive-portal-service.enabled": false,
+    "network.connectivity-service.enabled": false,
   };
 
   if (proxyUrl) {

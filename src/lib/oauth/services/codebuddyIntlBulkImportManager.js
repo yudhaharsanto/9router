@@ -36,89 +36,16 @@ async function defaultSaveCodeBuddyConnection({
 }
 
 /**
- * Bypass Keycloak first-broker-login / review-profile / update-profile page.
- *
- * Ketika akun Google baru pertama kali login via broker Keycloak,
- * Keycloak render form konfirmasi (email, first name, last name) yang
- * harus disubmit manual. Auto-isi field kosong + klik submit supaya
- * session ter-establish. Tanpa ini, cookie session tak lengkap dan
- * APISIX gateway return 401 saat POST /api-keys.
- *
- * ponytail: skipped: handle IDP-review dgn "add to existing" branch,
- * add when Keycloak versi baru pisah button submit/link.
- */
-async function handleKeycloakFirstBrokerLogin(page, account) {
-  // Tunggu form ke-render.
-  try {
-    await page.waitForSelector("form", { timeout: 8_000 });
-  } catch {
-    return;
-  }
-
-  // Isi field yang kosong: email, firstName, lastName, username.
-  const emailPrefix = String(account.email || "").split("@")[0] || "user";
-  const guessedFirst = emailPrefix.replace(/[^a-zA-Z]/g, "") || "User";
-  const guessedLast = "Account";
-  const fieldMap = [
-    ["#email", account.email],
-    ["input[name=email]", account.email],
-    ["#firstName", guessedFirst],
-    ["input[name=firstName]", guessedFirst],
-    ["#lastName", guessedLast],
-    ["input[name=lastName]", guessedLast],
-    ["#username", emailPrefix],
-    ["input[name=username]", emailPrefix],
-  ];
-  for (const [sel, val] of fieldMap) {
-    try {
-      const el = await page.$(sel);
-      if (!el) continue;
-      const current = await el.inputValue().catch(() => "");
-      if (!current) {
-        await el.fill(String(val));
-      }
-    } catch {}
-  }
-
-  // Klik submit — coba beberapa selector umum Keycloak.
-  const submitSelectors = [
-    "#kc-submit",
-    'input[type="submit"][name="submitAction"][value*="Add" i]',
-    'input[type="submit"][name="submitAction"]',
-    "button#kc-submit",
-    'button[type="submit"]',
-    'input[type="submit"]',
-  ];
-  for (const sel of submitSelectors) {
-    try {
-      const btn = await page.$(sel);
-      if (btn) {
-        await btn.click({ timeout: 3_000 });
-        return;
-      }
-    } catch {}
-  }
-  // Fallback: submit form pertama via JS.
-  try {
-    await page.evaluate(() => {
-      const f = document.querySelector("form");
-      if (f) f.submit();
-    });
-  } catch {}
-}
-
-/**
  * CodeBuddy International bulk import manager.
  *
  * Flow per account:
  *   1. Navigate to codebuddy.ai login page, click Google sign-in
  *   2. Google login (email → password → consent)
- *   3. Handle Keycloak first-broker-login (if shown) — auto-submit form
- *   4. Wait for redirect back to codebuddy.ai
- *   5. Navigate to /profile/keys
- *   6. POST /console/api/client/v1/api-keys to create API key
- *   7. Extract key from response
- *   8. Save connection with API key
+ *   3. Wait for redirect back to codebuddy.ai
+ *   4. Navigate to /profile/keys
+ *   5. POST /console/api/client/v1/api-keys to create API key
+ *   6. Extract key from response
+ *   7. Save connection with API key
  */
 export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
   constructor({
@@ -358,6 +285,47 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       const { context, page } = await createFreshContext(browser);
       account.runtimeSession = { context, page, browser };
 
+      // Block resource yang tak esensial supaya proxy tak dibanjiri
+      // request image/font/media/analytics. Google login page berat karena
+      // load banyak asset — ini bottleneck utama saat pakai proxy.
+      // Hanya block di host Google — biarkan Keycloak + codebuddy load full.
+      // ponytail: skipped: block per-host granular, add when perlu tuning
+      // beda per provider.
+      await context.route("**/*", (route) => {
+        try {
+          const req = route.request();
+          const url = req.url();
+          const type = req.resourceType();
+          // Skip resource berat di Google (accounts.google.com, gstatic).
+          const isGoogleHost =
+            /accounts\.google\.com|gstatic\.com|googleusercontent\.com|google-analytics|googletagmanager|doubleclick/i.test(
+              url,
+            );
+          if (
+            isGoogleHost &&
+            (type === "image" ||
+              type === "font" ||
+              type === "media" ||
+              type === "stylesheet")
+          ) {
+            return route.abort();
+          }
+          // Kill known tracking pixels/beacons di manapun.
+          if (
+            /googletagmanager|google-analytics|doubleclick\.net|sentry\.io|hotjar|amplitude|segment\.io|mixpanel/i.test(
+              url,
+            )
+          ) {
+            return route.abort();
+          }
+          return route.continue();
+        } catch {
+          try {
+            return route.continue();
+          } catch {}
+        }
+      });
+
       // Step 1: Navigate to CodeBuddy login page and click Google sign-in
       this.setAccountStep(
         account,
@@ -518,7 +486,6 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       successPromise.catch(() => {});
 
       let cbHits = 0;
-      let firstBrokerLoginHandled = false;
       const urlPollInterval = setInterval(() => {
         try {
           if (job.cancelRequested) {
@@ -527,26 +494,9 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
             return;
           }
           const url = page.url();
-          const onKeycloak = /\/auth\/realms\/[^/]+\//i.test(url);
-          // First-broker-login page = Keycloak minta konfirmasi link akun
-          // Google ke existing / new CodeBuddy user. Auto-submit form
-          // supaya session lanjut, bukan bail.
-          if (
-            /first-broker-login|review-profile|update-profile/i.test(url) &&
-            !firstBrokerLoginHandled
-          ) {
-            firstBrokerLoginHandled = true;
-            void handleKeycloakFirstBrokerLogin(page, account).catch((e) => {
-              console.warn(
-                `[codebuddy-bulk] ${account.email} first-broker-login submit failed: ${e.message}`,
-              );
-            });
-            return;
-          }
           if (
             url.includes("www.codebuddy.ai") &&
-            !url.includes("accounts.google.com") &&
-            !onKeycloak
+            !url.includes("accounts.google.com")
           ) {
             cbHits++;
             if (cbHits >= 2) {
@@ -580,107 +530,22 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       clearInterval(urlPollInterval);
       _checkCancel();
 
-      // Kalau masih stuck di Keycloak setelah automation loop selesai,
-      // coba submit form first-broker-login satu kali lagi (sync) supaya
-      // session lengkap sebelum lanjut buka /profile/keys.
-      try {
-        const curUrl = page.url();
-        if (
-          /\/auth\/realms\/[^/]+\/login-actions\/(first-broker-login|review-profile|update-profile)/i.test(
-            curUrl,
-          )
-        ) {
-          console.log(
-            `[codebuddy-bulk] ${account.email} still on Keycloak (${curUrl.slice(0, 100)}), attempting bypass...`,
-          );
-          await handleKeycloakFirstBrokerLogin(page, account);
-          // Tunggu redirect balik ke codebuddy home.
-          for (let i = 0; i < 30; i++) {
-            const u = page.url();
-            if (u.includes("www.codebuddy.ai") && !/\/auth\/realms\//i.test(u))
-              break;
-            await page.waitForTimeout(500);
-          }
-        }
-      } catch (e) {
-        console.warn(
-          `[codebuddy-bulk] ${account.email} keycloak bypass error: ${e.message}`,
-        );
-      }
-
       // Verify we're back on codebuddy.ai
       const currentUrl = page.url();
-      const isKeycloakStuck =
-        /\/auth\/realms\/[^/]+\/(login-actions|protocol)\//i.test(currentUrl);
-      if (!currentUrl.includes("www.codebuddy.ai") || isKeycloakStuck) {
+      if (!currentUrl.includes("www.codebuddy.ai")) {
         const shortUrl =
           currentUrl.length > 80 ? currentUrl.slice(0, 80) + "..." : currentUrl;
         const isGoogleStuck = currentUrl.includes("accounts.google.com");
-        const isFirstBrokerLogin = /first-broker-login/i.test(currentUrl);
-        // Keycloak restrict page: "Account Access Restricted" / "Invalid
-        // username or password" / first-broker-login (akun tak bisa
-        // auto-link, biasanya email conflict / restricted).
-        let pageBody = "";
-        try {
-          pageBody = await page.evaluate(
-            () => document.body?.innerText?.slice(0, 500) || "",
-          );
-        } catch {}
-        const isRestricted =
-          /account\s*access\s*restricted|invalid\s*username\s*or\s*password/i.test(
-            pageBody,
-          );
-        const permanent = isRestricted || isFirstBrokerLogin;
-        const err = new Error(
-          isFirstBrokerLogin
-            ? `Keycloak first-broker-login stuck (akun perlu manual link/verify)`
-            : isRestricted
-              ? `Account restricted by CodeBuddy (Keycloak blocked login)`
-              : isGoogleStuck
-                ? `Google OAuth stuck (likely proxy/anti-bot). URL: ${shortUrl}`
-                : `Did not redirect to CodeBuddy. URL: ${shortUrl}`,
+        throw new Error(
+          isGoogleStuck
+            ? `Google OAuth stuck (likely proxy/anti-bot). URL: ${shortUrl}`
+            : `Did not redirect to CodeBuddy. URL: ${shortUrl}`,
         );
-        if (permanent) err.permanent = true;
-        throw err;
       }
 
       // Wait for session to fully initialize
       await page.waitForTimeout(3000);
       _checkCancel();
-
-      // Double-check: kadang URL sudah www.codebuddy.ai tapi halaman
-      // sebenarnya redirect ke Keycloak restrict / first-broker-login page
-      // (iframe / late nav).
-      try {
-        const nowUrl = page.url();
-        if (
-          /\/auth\/realms\/[^/]+\/login-actions\/first-broker-login/i.test(
-            nowUrl,
-          )
-        ) {
-          const err = new Error(
-            "Keycloak first-broker-login stuck (akun perlu manual link/verify)",
-          );
-          err.permanent = true;
-          throw err;
-        }
-        const bodyText = await page.evaluate(
-          () => document.body?.innerText?.slice(0, 500) || "",
-        );
-        if (
-          /account\s*access\s*restricted|invalid\s*username\s*or\s*password|first[\s-]?broker[\s-]?login/i.test(
-            bodyText,
-          )
-        ) {
-          const err = new Error(
-            "Account restricted / first-broker-login (Keycloak blocked login)",
-          );
-          err.permanent = true;
-          throw err;
-        }
-      } catch (e) {
-        if (e?.permanent) throw e;
-      }
 
       // Step 3: Navigate to profile/keys page
       this.setAccountStep(account, "opening_keys", "Opening API keys page");
@@ -861,42 +726,9 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
               continue;
             }
           }
-          // 401 = APISIX gateway auth failure. Kalau body-nya HTML APISIX
-          // ("openresty" / "Authorization Required"), biasanya karena akun
-          // di-restrict Keycloak — session cookies tak valid untuk console
-          // API. Cek juga halaman untuk restrict banner: kalau ketemu,
-          // gagal permanen, no retry.
+          // 401 = APISIX gateway auth failure. Re-navigate + re-sniff
+          // headers + re-read bearer, lalu retry.
           if (createResult.status === 401) {
-            const raw401 = createResult.text || "";
-            const isApisixHtml =
-              /openresty|apache\s*apisix|authorization\s*required/i.test(
-                raw401,
-              );
-            let restrictedBody = "";
-            try {
-              restrictedBody = await page.evaluate(
-                () => document.body?.innerText?.slice(0, 500) || "",
-              );
-            } catch {}
-            if (
-              /account\s*access\s*restricted|invalid\s*username\s*or\s*password/i.test(
-                restrictedBody,
-              )
-            ) {
-              const err = new Error(
-                "Account restricted by CodeBuddy (401 + restrict banner)",
-              );
-              err.permanent = true;
-              throw err;
-            }
-            // Setelah 2 kali 401 dengan APISIX HTML → anggap akun restricted.
-            if (isApisixHtml && keyAttempt >= 1) {
-              const err = new Error(
-                `Account likely restricted — APISIX 401 persists after retry`,
-              );
-              err.permanent = true;
-              throw err;
-            }
             console.warn(
               `[codebuddy-bulk] ${account.email} 401 from APISIX (usedAuth=${createResult.usedAuth}, attempt=${keyAttempt + 1}), refreshing session...`,
             );
@@ -1031,7 +863,6 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       const isCancel = job.cancelRequested || error.message === "__CANCEL__";
       const isRetryable =
         !isCancel &&
-        !error?.permanent &&
         attempt < maxAttempts &&
         this._isRetryableProxyError(error);
 

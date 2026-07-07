@@ -633,6 +633,12 @@ export default function ProviderDetailPage() {
                       }
                     : null;
               }
+              // Fallback: API returned a message but no quota package (e.g.
+              // "No credit package found" for freshly signed CodeBuddy accts).
+              // Surface the message inline instead of showing "—".
+              if (!remaining && data?.message) {
+                remaining = { message: data.message };
+              }
             }
             return [conn.id, remaining];
           } catch {

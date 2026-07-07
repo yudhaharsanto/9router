@@ -6,12 +6,8 @@ import {
   getApiKeyRpmLimit,
   updateProviderConnection,
   getSettings,
-  getProxyPools,
 } from "@/lib/localDb";
-import {
-  resolveConnectionProxyConfig,
-  pickProxyPoolId,
-} from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import {
   formatRetryAfter,
   checkFallbackError,
@@ -67,15 +63,8 @@ export async function getProviderCredentials(
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const settings = await getSettings();
       const override = (settings.providerStrategies || {})[providerId] || {};
-      const strategy = override.rotateStrategy || "none";
-      let pickedId = override.proxyPoolId || null;
-      if (strategy !== "none") {
-        const allPools = await getProxyPools({ isActive: true });
-        const poolIds = allPools.filter((p) => p.proxyUrl).map((p) => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
-      }
       const resolvedProxy = await resolveConnectionProxyConfig({
-        proxyPoolId: pickedId || "",
+        proxyPoolId: override.proxyPoolId || "",
       });
       return {
         id: "noauth",
@@ -315,13 +304,23 @@ export async function markAccountUnavailable(
     typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(model, cooldownMs);
 
+  // Credits exhausted (CodeBuddy 14018, or generic "credits exhausted" text)
+  // is a terminal state — cooldown won't help, credits won't refill until user
+  // tops up. Disable connection permanently so rotation skips it.
+  const errStr = typeof errorText === "string" ? errorText.toLowerCase() : "";
+  const isCreditsExhausted =
+    /credits?\s*exhausted|insufficient\s*(credits?|points?)|out\s*of\s*(credits?|points?)|"code"\s*:\s*14018|积分不足|请充值|余额不足/i.test(
+      errStr,
+    );
+
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
-    testStatus: "unavailable",
+    testStatus: isCreditsExhausted ? "credits_exhausted" : "unavailable",
     lastError: reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel,
+    ...(isCreditsExhausted ? { isActive: false } : {}),
   });
 
   const lockKey = Object.keys(lockUpdate)[0];

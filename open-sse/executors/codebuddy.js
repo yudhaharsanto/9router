@@ -40,6 +40,37 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
     // filter and return an error (#2071).
     return transformed;
   }
+
+  /**
+   * CodeBuddy pakai format error non-OpenAI: {"error":{"data":{"code":14018,"msg":"..."}}}
+   * atau {"code":14018,"msg":"..."}. Kode 14018 = credits exhausted → force 429
+   * supaya markAccountUnavailable + cooldown quota kick in dan koneksi disabled.
+   */
+  parseError(response, bodyText) {
+    let json = null;
+    try {
+      json = JSON.parse(bodyText);
+    } catch {
+      return { status: response.status, message: bodyText };
+    }
+    // Bentuk bervariasi — coba semua.
+    const inner = json?.error?.data || json?.error || json?.data || json;
+    const code = inner?.code ?? json?.code;
+    const msg = inner?.msg || inner?.message || json?.msg || json?.message;
+
+    // 14018 = Credits exhausted. Paksa status 429 supaya errorConfig
+    // klasifikasi sebagai quota-exhausted (bukan transient 30s cooldown).
+    if (code === 14018 || /credits?\s*exhausted/i.test(msg || "")) {
+      return {
+        status: 429,
+        message: msg || "Credits exhausted",
+      };
+    }
+    return {
+      status: response.status,
+      message: msg || bodyText,
+    };
+  }
 }
 
 export default CodeBuddyIntlExecutor;

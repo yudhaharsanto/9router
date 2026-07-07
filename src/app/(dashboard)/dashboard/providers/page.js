@@ -2,13 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import {
-  Card,
-  CardSkeleton,
-  Badge,
-  Button,
-  Toggle,
-} from "@/shared/components";
+import { Card, CardSkeleton, Badge, Button, Toggle } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
@@ -104,6 +98,9 @@ export default function ProvidersPage() {
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
     useState(false);
   const [testingMode, setTestingMode] = useState(null);
+  // Aggregate balance per provider: { providerId: { remaining, used, total } }
+  // Only populated for providers with usage API (livscene, autoclaw, codebuddy).
+  const [providerBalances, setProviderBalances] = useState({});
   const [testResults, setTestResults] = useState(null);
   const notify = useNotificationStore();
   const searchQuery = useHeaderSearchStore((s) => s.query);
@@ -165,6 +162,79 @@ export default function ProvidersPage() {
     };
     fetchData();
   }, []);
+
+  // Fetch aggregate balance for livscene, autoclaw, codebuddy
+  useEffect(() => {
+    if (loading || connections.length === 0) return;
+    const BALANCE_PROVIDERS = [
+      "livscene",
+      "autoclaw",
+      "codebuddy",
+      "codebuddy-cn",
+    ];
+    const eligible = connections.filter(
+      (c) => BALANCE_PROVIDERS.includes(c.provider) && c.isActive !== false,
+    );
+    if (eligible.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.allSettled(
+        eligible.map(async (conn) => {
+          try {
+            const res = await fetch(`/api/usage/${conn.id}`);
+            if (!res.ok) return null;
+            const data = await res.json();
+            const quotas = data?.quotas || {};
+            if (conn.provider === "autoclaw") {
+              return {
+                provider: conn.provider,
+                remaining: quotas.Points?.remaining ?? 0,
+              };
+            }
+            if (conn.provider === "livscene") {
+              return {
+                provider: conn.provider,
+                remaining: quotas.Credits?.remaining ?? 0,
+              };
+            }
+            // CodeBuddy: sum all recurring + bonus quotas
+            let totalRemaining = 0;
+            let totalUsed = 0;
+            let totalSize = 0;
+            for (const q of Object.values(quotas)) {
+              if (typeof q.total === "number" && typeof q.used === "number") {
+                totalRemaining += q.total - q.used;
+                totalUsed += q.used;
+                totalSize += q.total;
+              }
+            }
+            return {
+              provider: conn.provider,
+              remaining: totalRemaining,
+              used: totalUsed,
+              total: totalSize,
+            };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const agg = {};
+      for (const r of results) {
+        if (r.status !== "fulfilled" || !r.value) continue;
+        const { provider, ...bal } = r.value;
+        if (!agg[provider]) agg[provider] = { remaining: 0, used: 0, total: 0 };
+        agg[provider].remaining += bal.remaining ?? 0;
+        agg[provider].used += bal.used ?? 0;
+        agg[provider].total += bal.total ?? 0;
+      }
+      setProviderBalances(agg);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, connections]);
 
   const getProviderStats = (providerId, authType) => {
     const authTypes = Array.isArray(authType) ? authType : [authType];
@@ -278,7 +348,9 @@ export default function ProvidersPage() {
     .filter((p) => matchSearch(p.name));
 
   const oauthEntries = sortByPriority(
-    Object.entries(OAUTH_PROVIDERS).filter(([, info]) => !info.hidden && matchSearch(info.name)),
+    Object.entries(OAUTH_PROVIDERS).filter(
+      ([, info]) => !info.hidden && matchSearch(info.name),
+    ),
     "oauth",
   );
   const freeEntries = Object.entries(FREE_PROVIDERS)
@@ -338,7 +410,9 @@ export default function ProvidersPage() {
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
             search_off
           </span>
-          <p className="text-text-muted text-sm">No providers match your search</p>
+          <p className="text-text-muted text-sm">
+            No providers match your search
+          </p>
         </div>
       )}
 
@@ -371,8 +445,13 @@ export default function ProvidersPage() {
         {compatibleProviders.length === 0 &&
         anthropicCompatibleProviders.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-2 border border-dashed border-border rounded-xl text-text-muted text-sm">
-            <span className="material-symbols-outlined text-[18px]">extension</span>
-            <span>No custom providers — use buttons above to add OpenAI/Anthropic compatible endpoints</span>
+            <span className="material-symbols-outlined text-[18px]">
+              extension
+            </span>
+            <span>
+              No custom providers — use buttons above to add OpenAI/Anthropic
+              compatible endpoints
+            </span>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
@@ -396,157 +475,166 @@ export default function ProvidersPage() {
 
       {/* OAuth Providers */}
       {oauthEntries.length > 0 && (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
-            OAuth Providers
-          </h2>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-            <ModelAvailabilityBadge />
-            <button
-              onClick={() => handleBatchTest("oauth")}
-              disabled={!!testingMode}
-              className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
-                testingMode === "oauth"
-                  ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
-                  : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
-              }`}
-              title="Test all OAuth connections"
-              aria-label="Test all OAuth connections"
-            >
-              <span
-                className={`material-symbols-outlined text-[14px]${testingMode === "oauth" ? " animate-spin" : ""}`}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
+              OAuth Providers
+            </h2>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <ModelAvailabilityBadge />
+              <button
+                onClick={() => handleBatchTest("oauth")}
+                disabled={!!testingMode}
+                className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
+                  testingMode === "oauth"
+                    ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
+                    : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
+                }`}
+                title="Test all OAuth connections"
+                aria-label="Test all OAuth connections"
               >
-                play_arrow
-              </span>
-              {testingMode === "oauth" ? "Testing..." : "Test All"}
-            </button>
+                <span
+                  className={`material-symbols-outlined text-[14px]${testingMode === "oauth" ? " animate-spin" : ""}`}
+                >
+                  play_arrow
+                </span>
+                {testingMode === "oauth" ? "Testing..." : "Test All"}
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {oauthEntries.map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="oauth"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
-        </div>
-      </div>
-      )}
-
-      {/* Free Tier Providers */}
-      {(freeEntries.length > 0 || freeTierEntries.length > 0) && (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
-            Free Tier Providers
-          </h2>
-          <button
-            onClick={() => handleBatchTest("free")}
-            disabled={!!testingMode}
-            className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
-              testingMode === "free"
-                ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
-                : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
-            }`}
-            title="Test all Free connections"
-            aria-label="Test all Free provider connections"
-          >
-            <span
-              className={`material-symbols-outlined text-[14px]${testingMode === "free" ? " animate-spin" : ""}`}
-            >
-              play_arrow
-            </span>
-            {testingMode === "free" ? "Testing..." : "Test All"}
-          </button>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {freeEntries.map(([key, info]) => {
-            // Kiro accepts both OAuth and api-key connections; count/toggle both
-            // so the card total matches the provider detail page (#kiro-apikey).
-            // Kiro's headless api-key flow persists authType "api_key" (underscore),
-            // while generic apikey providers use "apikey" — include both spellings.
-            const freeAuthTypes =
-              key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
-            return (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {oauthEntries.map(([key, info]) => (
               <ProviderCard
                 key={key}
                 providerId={key}
                 provider={info}
-                stats={getProviderStats(key, freeAuthTypes)}
-                authType="free"
+                stats={getProviderStats(key, "oauth")}
+                authType="oauth"
                 onToggle={(active) =>
-                  handleToggleProvider(key, freeAuthTypes, active)
+                  handleToggleProvider(key, "oauth", active)
                 }
               />
-            );
-          })}
-          {freeTierEntries.map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-              authType="apikey"
-              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
-            />
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Free Tier Providers */}
+      {(freeEntries.length > 0 || freeTierEntries.length > 0) && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
+              Free Tier Providers
+            </h2>
+            <button
+              onClick={() => handleBatchTest("free")}
+              disabled={!!testingMode}
+              className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
+                testingMode === "free"
+                  ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
+                  : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
+              }`}
+              title="Test all Free connections"
+              aria-label="Test all Free provider connections"
+            >
+              <span
+                className={`material-symbols-outlined text-[14px]${testingMode === "free" ? " animate-spin" : ""}`}
+              >
+                play_arrow
+              </span>
+              {testingMode === "free" ? "Testing..." : "Test All"}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {freeEntries.map(([key, info]) => {
+              // Kiro accepts both OAuth and api-key connections; count/toggle both
+              // so the card total matches the provider detail page (#kiro-apikey).
+              // Kiro's headless api-key flow persists authType "api_key" (underscore),
+              // while generic apikey providers use "apikey" — include both spellings.
+              const freeAuthTypes =
+                key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
+              return (
+                <ProviderCard
+                  key={key}
+                  providerId={key}
+                  provider={info}
+                  stats={getProviderStats(key, freeAuthTypes)}
+                  authType="free"
+                  onToggle={(active) =>
+                    handleToggleProvider(key, freeAuthTypes, active)
+                  }
+                />
+              );
+            })}
+            {freeTierEntries.map(([key, info]) => (
+              <ApiKeyProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, "apikey")}
+                authType="apikey"
+                onToggle={(active) =>
+                  handleToggleProvider(key, "apikey", active)
+                }
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {/* API Key Providers — fixed list */}
       {apikeyEntries.length > 0 && (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
-            API Key Providers{" "}
-          </h2>
-          <button
-            onClick={() => handleBatchTest("apikey")}
-            disabled={!!testingMode}
-            className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
-              testingMode === "apikey"
-                ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
-                : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
-            }`}
-            title="Test all API Key connections"
-            aria-label="Test all API Key connections"
-          >
-            <span
-              className={`material-symbols-outlined text-[14px]${testingMode === "apikey" ? " animate-spin" : ""}`}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
+              API Key Providers{" "}
+            </h2>
+            <button
+              onClick={() => handleBatchTest("apikey")}
+              disabled={!!testingMode}
+              className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors sm:w-auto sm:py-1.5 ${
+                testingMode === "apikey"
+                  ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
+                  : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
+              }`}
+              title="Test all API Key connections"
+              aria-label="Test all API Key connections"
             >
-              play_arrow
-            </span>
-            {testingMode === "apikey" ? "Testing..." : "Test All"}
-          </button>
+              <span
+                className={`material-symbols-outlined text-[14px]${testingMode === "apikey" ? " animate-spin" : ""}`}
+              >
+                play_arrow
+              </span>
+              {testingMode === "apikey" ? "Testing..." : "Test All"}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {visibleApikeyEntries.map(([key, info]) => (
+              <ApiKeyProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, "apikey")}
+                authType="apikey"
+                balance={providerBalances[key]}
+                onToggle={(active) =>
+                  handleToggleProvider(key, "apikey", active)
+                }
+              />
+            ))}
+          </div>
+          {!isApikeySearching && !showAllApikey && hiddenApikeyCount > 0 && (
+            <button
+              onClick={() => setShowAllApikey(true)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm font-medium text-primary transition-colors hover:border-primary hover:bg-primary/5"
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                expand_more
+              </span>
+              Show all {apikeyEntries.length} providers
+            </button>
+          )}
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {visibleApikeyEntries.map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-              authType="apikey"
-              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
-            />
-          ))}
-        </div>
-        {!isApikeySearching && !showAllApikey && hiddenApikeyCount > 0 && (
-          <button
-            onClick={() => setShowAllApikey(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm font-medium text-primary transition-colors hover:border-primary hover:bg-primary/5"
-          >
-            <span className="material-symbols-outlined text-[16px]">expand_more</span>
-            Show all {apikeyEntries.length} providers
-          </button>
-        )}
-      </div>
       )}
 
       {/* Web Cookie Providers — use browser subscription cookie instead of API key */}
@@ -675,7 +763,9 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
                     </span>
                   </Badge>
                 ) : isNoAuth ? (
-                  <Badge variant="success" size="sm" dot>Ready</Badge>
+                  <Badge variant="success" size="sm" dot>
+                    Ready
+                  </Badge>
                 ) : (
                   <>
                     {getStatusDisplay(connected, error, errorCode)}
@@ -735,6 +825,7 @@ function ApiKeyProviderCard({
   provider,
   stats,
   authType,
+  balance,
   onToggle,
 }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
@@ -822,6 +913,27 @@ function ApiKeyProviderCard({
                     )}
                   </>
                 )}
+                {balance && balance.remaining !== undefined && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                      balance.remaining > 0
+                        ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                        : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
+                    }`}
+                    title={
+                      balance.total
+                        ? `${balance.used?.toLocaleString()} / ${balance.total.toLocaleString()} used`
+                        : undefined
+                    }
+                  >
+                    <span className="material-symbols-outlined text-[12px]">
+                      toll
+                    </span>
+                    {balance.total
+                      ? `${balance.remaining.toLocaleString()} / ${balance.total.toLocaleString()}`
+                      : balance.remaining.toLocaleString()}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -865,6 +977,11 @@ ApiKeyProviderCard.propTypes = {
     errorCode: PropTypes.string,
     errorTime: PropTypes.string,
   }).isRequired,
+  balance: PropTypes.shape({
+    remaining: PropTypes.number,
+    used: PropTypes.number,
+    total: PropTypes.number,
+  }),
   authType: PropTypes.string,
   onToggle: PropTypes.func,
 };

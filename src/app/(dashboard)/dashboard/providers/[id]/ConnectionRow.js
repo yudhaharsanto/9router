@@ -267,20 +267,31 @@ export default function ConnectionRow({
                 className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                   balance === null
                     ? "bg-black/5 text-text-muted dark:bg-white/5"
-                    : typeof balance === "object"
-                      ? balance.remaining > 0
-                        ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
-                        : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
-                      : balance > 0
-                        ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
-                        : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
+                    : typeof balance === "object" && balance.message
+                      ? "bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
+                      : typeof balance === "object"
+                        ? balance.remaining > 0
+                          ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                          : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
+                        : balance > 0
+                          ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                          : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
                 }`}
+                title={
+                  typeof balance === "object" && balance?.message
+                    ? balance.message
+                    : undefined
+                }
               >
                 <span className="material-symbols-outlined text-[12px]">
                   toll
                 </span>
                 {balance === null ? (
                   <span>—</span>
+                ) : typeof balance === "object" && balance.message ? (
+                  <span className="truncate max-w-[220px]">
+                    {balance.message}
+                  </span>
                 ) : typeof balance === "object" ? (
                   <span className="flex items-center gap-1.5">
                     <span>

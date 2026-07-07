@@ -23,10 +23,12 @@ export const QUOTA_SORT_OPTIONS = [
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 export function getConnectionLabel(connection) {
-  return connection.name?.trim()
-    || connection.email?.trim()
-    || connection.displayName?.trim()
-    || null;
+  return (
+    connection.name?.trim() ||
+    connection.email?.trim() ||
+    connection.displayName?.trim() ||
+    null
+  );
 }
 
 export function getConnectionQuotaRemaining(connection, quotaData) {
@@ -107,7 +109,11 @@ export function getConnectionsPageRange(pagination) {
   return { start, end };
 }
 
-export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter) {
+export function getConnectionsEmptyMessage(
+  totals,
+  providerFilter,
+  accountFilter,
+) {
   if (!totals.eligibleConnections) {
     return {
       icon: "cloud_off",
@@ -177,11 +183,15 @@ export function getPaginationPageValue(dataPagination, fallbackPage) {
 
 // Providers yang balance-nya ditampilkan inline di dashboard/providers/[id]
 // dan tidak perlu muncul di halaman Quota Tracker (menghindari duplikasi UI).
-const QUOTA_TRACKER_HIDDEN_PROVIDERS = new Set(["autoclaw", "codebuddy", "codebuddy-cn"]);
+export const QUOTA_TRACKER_HIDDEN_PROVIDERS = new Set([
+  "autoclaw",
+  "codebuddy",
+  "codebuddy-cn",
+]);
 
 export function getProviderOptions(dataProviderOptions) {
   return (dataProviderOptions || []).filter(
-    (opt) => !QUOTA_TRACKER_HIDDEN_PROVIDERS.has(opt?.id || opt?.value)
+    (opt) => !QUOTA_TRACKER_HIDDEN_PROVIDERS.has(opt?.id || opt?.value),
   );
 }
 
@@ -230,20 +240,20 @@ export function formatResetTime(date) {
     if (diffMs <= 0) return "-";
 
     const totalMinutes = Math.ceil(diffMs / (1000 * 60));
-    
+
     // < 60 minutes: show only minutes
     if (totalMinutes < 60) {
       return `${totalMinutes}m`;
     }
-    
+
     const totalHours = Math.floor(totalMinutes / 60);
     const remainingMinutes = totalMinutes % 60;
-    
+
     // < 24 hours: show hours and minutes
     if (totalHours < 24) {
       return `${totalHours}h ${remainingMinutes}m`;
     }
-    
+
     // >= 24 hours: show days, hours, and minutes
     const days = Math.floor(totalHours / 24);
     const remainingHours = totalHours % 24;
@@ -409,11 +419,19 @@ export function parseQuotaData(provider, data) {
         // as "348%". The percentage is computed from used/total instead.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([quotaType, quota]) => {
-            if (quotaType === "organization" && (!quota || (Number(quota.total) || 0) === 0)) {
+            if (
+              quotaType === "organization" &&
+              (!quota || (Number(quota.total) || 0) === 0)
+            ) {
               return;
             }
             normalizedQuotas.push({
-              name: quotaType === "user" ? "Personal" : quotaType === "organization" ? "Organization" : quotaType,
+              name:
+                quotaType === "user"
+                  ? "Personal"
+                  : quotaType === "organization"
+                    ? "Organization"
+                    : quotaType,
               used: quota.used || 0,
               total: quota.total || 0,
               unit: quota.unit,
@@ -521,7 +539,7 @@ export function parseQuotaData(provider, data) {
   const modelOrder = getModelsByProviderId(provider);
   if (modelOrder.length > 0) {
     const orderMap = new Map(modelOrder.map((m, i) => [m.id, i]));
-    
+
     normalizedQuotas.sort((a, b) => {
       // Use modelKey for antigravity, otherwise use name
       const keyA = a.modelKey || a.name;

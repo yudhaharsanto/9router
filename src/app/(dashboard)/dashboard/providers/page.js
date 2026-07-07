@@ -510,6 +510,7 @@ export default function ProvidersPage() {
                 provider={info}
                 stats={getProviderStats(key, "oauth")}
                 authType="oauth"
+                balance={providerBalances[key]}
                 onToggle={(active) =>
                   handleToggleProvider(key, "oauth", active)
                 }
@@ -708,7 +709,14 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
+function ProviderCard({
+  providerId,
+  provider,
+  stats,
+  authType,
+  balance,
+  onToggle,
+}) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isNoAuth = !!provider.noAuth;
 
@@ -773,6 +781,27 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
                       <span className="text-text-muted">{errorTime}</span>
                     )}
                   </>
+                )}
+                {balance && balance.remaining !== undefined && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                      balance.remaining > 0
+                        ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                        : "bg-red-500/10 text-red-600 dark:bg-red-500/15 dark:text-red-400"
+                    }`}
+                    title={
+                      balance.total
+                        ? `${balance.used?.toLocaleString()} / ${balance.total.toLocaleString()} used`
+                        : undefined
+                    }
+                  >
+                    <span className="material-symbols-outlined text-[12px]">
+                      toll
+                    </span>
+                    {balance.total
+                      ? `${balance.remaining.toLocaleString()} / ${balance.total.toLocaleString()}`
+                      : balance.remaining.toLocaleString()}
+                  </span>
                 )}
               </div>
             </div>

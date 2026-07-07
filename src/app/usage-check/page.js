@@ -1230,14 +1230,14 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                     key={i}
                     className="hover:bg-surface-2/50 transition-colors cursor-pointer"
                     onClick={() => {
-                      copyText(bid);
+                      copyText(m);
                     }}
                   >
                     <td className="py-1.5 px-3">
                       <div className="flex items-center gap-2">
                         <ModelIcon model={m} size={16} />
                         <code className="text-[11px] font-mono text-text-main truncate">
-                          {bid}
+                          {m}
                         </code>
                       </div>
                     </td>
@@ -1248,7 +1248,7 @@ function ModelsList({ apiKey, origin, aliases = {} }) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          copyText(bid);
+                          copyText(m);
                         }}
                         className="p-1 rounded text-text-muted hover:text-primary transition-colors"
                         type="button"

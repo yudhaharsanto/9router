@@ -483,6 +483,13 @@ export class BulkImportManager {
       proxyUrl,
     );
 
+    // Shuffle so accounts are processed in random order, not the
+    // order they were entered. Fisher-Yates.
+    for (let i = parsed.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [parsed[i], parsed[j]] = [parsed[j], parsed[i]];
+    }
+
     const job = {
       jobId,
       status: "running",
@@ -565,12 +572,8 @@ export class BulkImportManager {
       account.resolvedProxyUrl = null;
       return;
     }
-    const url =
-      job.resolvedProxyUrls[
-        job.proxyRotationIndex % job.resolvedProxyUrls.length
-      ];
-    job.proxyRotationIndex += 1;
-    account.resolvedProxyUrl = url;
+    const idx = Math.floor(Math.random() * job.resolvedProxyUrls.length);
+    account.resolvedProxyUrl = job.resolvedProxyUrls[idx];
   }
 
   getJob(jobId) {

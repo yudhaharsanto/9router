@@ -1078,6 +1078,33 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       }
       _checkCancel();
 
+      // Check session expiry right after navigation
+      const expiredAfterNav = await (async () => {
+        try {
+          const info = await page
+            .evaluate(() => {
+              const body = document.body?.textContent || "";
+              const title = document.title || "";
+              return {
+                hasExpiredText:
+                  /page has expired|session expired|token expired/i.test(body),
+                hasExpiredTitle: /expired/i.test(title),
+                hasClickHere: /click here/i.test(body),
+              };
+            })
+            .catch(() => null);
+          if (!info) return false;
+          return (
+            info.hasExpiredText || (info.hasExpiredTitle && info.hasClickHere)
+          );
+        } catch {
+          return false;
+        }
+      })();
+      if (expiredAfterNav) {
+        throw new Error("__SESSION_EXPIRED__");
+      }
+
       // Combined sniff + region guard: wait up to 15s for SPA to fire
       // its /api-keys request while ALSO monitoring URL. SPA guard may
       // redirect to /register/user/complete at any point during this
@@ -1085,10 +1112,39 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       let guardUrl = page.url();
       console.log(`[codebuddy-bulk] ${account.email} pre-keys url=${guardUrl}`);
 
+      // Helper: detect "Page has expired" session expiry screen.
+      const isSessionExpired = async () => {
+        try {
+          const info = await page
+            .evaluate(() => {
+              const body = document.body?.textContent || "";
+              const title = document.title || "";
+              return {
+                hasExpiredText:
+                  /page has expired|session expired|token expired/i.test(body),
+                hasExpiredTitle: /expired/i.test(title),
+                hasClickHere: /click here/i.test(body),
+              };
+            })
+            .catch(() => null);
+          if (!info) return false;
+          return (
+            info.hasExpiredText || (info.hasExpiredTitle && info.hasClickHere)
+          );
+        } catch {
+          return false;
+        }
+      };
+
       const keysDeadline = Date.now() + 15_000;
       while (Date.now() < keysDeadline) {
         await page.waitForTimeout(500);
         guardUrl = page.url();
+
+        // Check session expiry FIRST
+        if (await isSessionExpired()) {
+          throw new Error("__SESSION_EXPIRED__");
+        }
 
         if (guardUrl.includes("/register/user/complete")) {
           // SPA redirect ke region page — handle sekarang
@@ -1108,27 +1164,18 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
               "Region selection failed — /register/user/complete still active",
             );
           }
-          // Re-navigate ke keys
-          try {
-            await page.goto("https://www.codebuddy.ai/profile/keys", {
-              waitUntil: "domcontentloaded",
-              timeout: 30_000,
-            });
-          } catch (e) {
-            console.log(
-              `[codebuddy-bulk] ${account.email} keys re-nav aborted: ${e?.message?.slice(0, 80)}`,
-            );
-          }
-          await page.waitForTimeout(3000);
-
-          guardUrl = page.url();
-          if (guardUrl.includes("/register/user/complete")) {
-            throw new Error(
-              "Region still present after retry — backend rejected",
-            );
+          // Jangan force-navigate ke /profile/keys — SPA akan
+          // navigate natural setelah submit. Force goto malah
+          // trigger SPA guard redirect balik ke region page.
+          // Cukup tunggu URL keluar dari /register/user/complete.
+          const navDeadline = Date.now() + 20_000;
+          while (Date.now() < navDeadline) {
+            await page.waitForTimeout(500);
+            guardUrl = page.url();
+            if (!guardUrl.includes("/register/user/complete")) break;
           }
           console.log(
-            `[codebuddy-bulk] ${account.email} region cleared, url=${guardUrl}`,
+            `[codebuddy-bulk] ${account.email} after region, url=${guardUrl}`,
           );
           break;
         }
@@ -1422,18 +1469,22 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
         error.stack,
       );
       const isCancel = job.cancelRequested || error.message === "__CANCEL__";
+      const isSessionExpired = error.message === "__SESSION_EXPIRED__";
       const isRetryable =
         !isCancel &&
         attempt < maxAttempts &&
-        this._isRetryableProxyError(error);
+        (isSessionExpired || this._isRetryableProxyError(error));
 
       if (isRetryable) {
         // Jangan finalize — biarkan processAccount coba lagi dengan browser
         // fresh. Update step untuk visibility.
+        const reason = isSessionExpired
+          ? "Session expired"
+          : `Proxy error: ${error.message?.slice(0, 100) || "refused"}`;
         this.setAccountStep(
           account,
-          "proxy_error",
-          `Proxy error: ${error.message?.slice(0, 100) || "refused"} (attempt ${attempt}/${maxAttempts})`,
+          isSessionExpired ? "session_expired" : "proxy_error",
+          `${reason} (attempt ${attempt}/${maxAttempts})`,
         );
         outcome = { status: "retryable", error: error.message };
       } else {

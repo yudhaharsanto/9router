@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 /**
  * Browser engine launcher for bulk-import automation.
  *
@@ -60,6 +64,18 @@ async function launchCamoufox({ proxyUrl, headless = true } = {}) {
   delete launchOptions.deviceScaleFactor;
   delete launchOptions.isMobile;
   delete launchOptions.hasTouch;
+
+  // Unique temp profile per launch — concurrent workers sharing the
+  // same Camoufox profile directory corrupt SQLite databases (places.sqlite,
+  // cookies.sqlite) → "file is not a database".
+  let userDataDir = mkdtempSync(join(tmpdir(), "camoufox-"));
+  launchOptions.userDataDir = userDataDir;
+  // Also set Firefox args for isolation
+  launchOptions.args = [
+    ...(launchOptions.args || []),
+    "--no-remote",
+    "--new-instance",
+  ];
 
   // Disable uBlock Origin addon — it blocks SPA scripts on sites like codebuddy.cn
   if (launchOptions.env?.CAMOU_CONFIG_1) {

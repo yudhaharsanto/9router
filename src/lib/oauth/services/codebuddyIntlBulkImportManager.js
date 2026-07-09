@@ -9,6 +9,31 @@ const CODEBUDDY_LABEL = "CodeBuddy";
 const CODEBUDDY_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Safe page.evaluate() wrapper — retry 3x with 500ms backoff when SPA
+ * destroys the execution context mid-evaluation (RCE). Return null on
+ * persistent failure.
+ */
+async function safeEval(page, fn, fallback = null) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await page.evaluate(fn);
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (
+        /execution context.*destroy|target closed|navigating|page changed/i.test(
+          msg,
+        )
+      ) {
+        if (attempt < 2) await page.waitForTimeout(500);
+        continue;
+      }
+      throw err;
+    }
+  }
+  return fallback;
+}
+
+/**
  * Handler untuk region page CodeBuddy — klik input, pilih Singapore,
  * submit, tunggu URL/DOM keluar. Return true kalau sukses.
  */
@@ -46,7 +71,7 @@ async function handleRegionSelectionMouse(page, emailForLog = "") {
         } catch {}
       }
       if (!sgClicked) {
-        sgClicked = await page.evaluate(() => {
+        sgClicked = await safeEval(page, () => {
           const els = Array.from(
             document.querySelectorAll(
               "li, [role='option'], .t-select-option, div, span",
@@ -104,7 +129,7 @@ async function handleRegionSelectionMouse(page, emailForLog = "") {
         } catch {}
       }
       if (!submitClicked) {
-        submitClicked = await page.evaluate(() => {
+        submitClicked = await safeEval(page, () => {
           const btns = Array.from(
             document.querySelectorAll(
               "button, [role='button'], div[class*='cursor-pointer'], div[class*='bg-#28B894']",
@@ -417,7 +442,8 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       msg.includes("err_proxy") ||
       msg.includes("socket hang up") ||
       msg.includes("econnrefused") ||
-      msg.includes("econnreset")
+      msg.includes("econnreset") ||
+      msg.includes("file is not a database")
     );
   }
 
@@ -640,6 +666,11 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       if (!page.url().includes("accounts.google.com")) {
         throw new Error("Did not reach Google OAuth page");
       }
+
+      // Human-like delay before typing — Google flags instant type-after-
+      // load as automation. Random 1.5-4s pause.
+      const humanDelay = 1500 + Math.floor(Math.random() * 2500);
+      await page.waitForTimeout(humanDelay);
 
       // Step 2: Run Google account automation
       this.setAccountStep(
@@ -912,7 +943,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
               }
               if (!sgClicked) {
                 // DOM scan fallback
-                sgClicked = await page.evaluate(() => {
+                sgClicked = await safeEval(page, () => {
                   const els = Array.from(
                     document.querySelectorAll(
                       "li, [role='option'], .t-select-option, div, span",
@@ -971,7 +1002,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
                 } catch {}
               }
               if (!submitClicked) {
-                submitClicked = await page.evaluate(() => {
+                submitClicked = await safeEval(page, () => {
                   const btns = Array.from(
                     document.querySelectorAll("button, [role='button']"),
                   );
@@ -1226,7 +1257,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       // (read-only, no dynamic string eval — aman dari RCE).
       let storageToken = null;
       try {
-        storageToken = await page.evaluate(() => {
+        storageToken = await safeEval(page, () => {
           try {
             for (const store of [localStorage, sessionStorage]) {
               for (let i = 0; i < store.length; i++) {
@@ -1364,7 +1395,7 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
             page.off("request", reSniff);
             // Re-baca bearer token (mungkin sudah rotate).
             try {
-              storageToken = await page.evaluate(() => {
+              storageToken = await safeEval(page, () => {
                 try {
                   for (const store of [localStorage, sessionStorage]) {
                     for (let i = 0; i < store.length; i++) {

@@ -77,29 +77,6 @@ class AutoClawApiClient {
     };
   }
 
-  /**
-   * Construct Google OAuth URL directly, bypassing the dead
-   * overseasv1/google-oauth-url endpoint (631002).
-   * Uses the same client_id, redirect_uri, scope the server would generate.
-   */
-  constructOAuthUrl() {
-    const params = new URLSearchParams({
-      client_id: this.config.clientId,
-      redirect_uri: this.config.redirectUri,
-      response_type: "code",
-      scope: "openid email profile",
-      state: crypto.randomBytes(16).toString("hex"),
-      access_type: "offline",
-      prompt: "consent",
-    });
-    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-    const state = params.get("state");
-    console.log(
-      `[autoclaw-bulk] constructOAuthUrl state=${state.slice(0, 20)}... (bypassing overseasv1)`,
-    );
-    return { oauthUrl: url, state };
-  }
-
   async requestOAuthUrl(deviceId) {
     const body = JSON.stringify({
       source_id: this.config.sourceId,
@@ -436,10 +413,6 @@ export class AutoClawBulkImportManager extends BulkImportManager {
     account._rejectTokens = () => {};
 
     // Step 1: ask AutoClaw for the Google consent URL + state.
-    // The overseasv1/google-oauth-url endpoint returns 631002 ("version no
-    // longer supported") for APP_ID 100003. Fall back to constructing the
-    // Google OAuth URL directly — google-oauth-login (token exchange) still
-    // works with the same APP_ID.
     let oauthUrl;
     let state;
     try {
@@ -449,30 +422,24 @@ export class AutoClawBulkImportManager extends BulkImportManager {
         "Requesting AutoClaw OAuth URL",
       );
       await this.persistJobSnapshot(job, { forcePreview: true });
-      try {
-        const urlResp = await autoclawService.requestOAuthUrl(deviceId);
-        oauthUrl = urlResp.oauthUrl;
-        state = urlResp.state;
-      } catch (serverErr) {
-        if (
-          /631002|version.*no longer|not supported/i.test(serverErr.message)
-        ) {
-          console.log(
-            `[autoclaw-bulk] overseasv1/google-oauth-url dead (631002), using direct Google OAuth URL`,
-          );
-          const direct = autoclawService.constructOAuthUrl();
-          oauthUrl = direct.oauthUrl;
-          state = direct.state;
-        } else {
-          throw serverErr;
-        }
-      }
+      const urlResp = await autoclawService.requestOAuthUrl(deviceId);
+      oauthUrl = urlResp.oauthUrl;
+      state = urlResp.state;
     } catch (error) {
-      this.finalizeAccount(account, "failed", {
-        error: error.message,
-        step: "request_oauth_url_failed",
-        message: `AutoClaw OAuth URL request failed: ${error.message}`,
-      });
+      if (/631002|version.*no longer|not supported/i.test(error.message)) {
+        this.finalizeAccount(account, "failed", {
+          error: error.message,
+          step: "oauth_endpoint_dead",
+          message:
+            "AutoClaw overseasv1/google-oauth-url is disabled (631002). Bulk import blocked until AutoClaw releases updated credentials (APP_ID). Existing accounts can still refresh + proxy.",
+        });
+      } else {
+        this.finalizeAccount(account, "failed", {
+          error: error.message,
+          step: "request_oauth_url_failed",
+          message: `AutoClaw OAuth URL request failed: ${error.message}`,
+        });
+      }
       return { status: "failed" };
     }
 

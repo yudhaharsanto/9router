@@ -9,6 +9,147 @@ const CODEBUDDY_LABEL = "CodeBuddy";
 const CODEBUDDY_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Handler untuk region page CodeBuddy — klik input, pilih Singapore,
+ * submit, tunggu URL/DOM keluar. Return true kalau sukses.
+ */
+async function handleRegionSelectionMouse(page, emailForLog = "") {
+  const tag = `[codebuddy-region] ${emailForLog}`;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const inputSel =
+        'input[placeholder="Registration location"], input.t-input__inner[readonly]';
+      await page.waitForSelector(inputSel, { timeout: 15_000 });
+      const regionInput = page.locator(inputSel).first();
+      await regionInput.scrollIntoViewIfNeeded().catch(() => {});
+      await page.waitForTimeout(400);
+      await regionInput.click({ timeout: 8_000 });
+      await page.waitForTimeout(1200);
+
+      const optionSelectors = [
+        'li:has-text("Singapore")',
+        '[role="option"]:has-text("Singapore")',
+        '.t-select-option:has-text("Singapore")',
+        'ul.dropdown-section li:has-text("Singapore")',
+        '.dropdown-section li:has-text("Singapore")',
+        '[class*="option"]:has-text("Singapore")',
+      ];
+      let sgClicked = false;
+      for (const sel of optionSelectors) {
+        try {
+          const loc = page.locator(sel).first();
+          if ((await loc.count()) > 0) {
+            await loc.scrollIntoViewIfNeeded().catch(() => {});
+            await loc.click({ timeout: 5_000 });
+            sgClicked = true;
+            break;
+          }
+        } catch {}
+      }
+      if (!sgClicked) {
+        sgClicked = await page.evaluate(() => {
+          const els = Array.from(
+            document.querySelectorAll(
+              "li, [role='option'], .t-select-option, div, span",
+            ),
+          );
+          for (const el of els) {
+            const txt = (el.textContent || "").trim();
+            if (/^singapore$/i.test(txt)) {
+              const r = el.getBoundingClientRect();
+              if (r.width > 0 && r.height > 0) {
+                el.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        });
+      }
+      console.log(`${tag} iter ${i + 1} Singapore clicked=${sgClicked}`);
+      if (!sgClicked) {
+        await page.waitForTimeout(2000);
+        continue;
+      }
+      await page.waitForTimeout(800);
+
+      const submitSelectors = [
+        'button:has-text("Get started")',
+        'button:has-text("Get Started")',
+        'button:has-text("Start")',
+        'button:has-text("Submit")',
+        'button:has-text("Continue")',
+        'button:has-text("Confirm")',
+        'button:has-text("OK")',
+        'button:has-text("Ok")',
+        'div[class*="cursor-pointer"]:has-text("Submit")',
+        'div:has-text("Submit")',
+        ".page-region button.t-button--primary",
+        ".page-region button:not([disabled])",
+        "button.t-button--primary",
+        'button[type="submit"]',
+      ];
+      let submitClicked = false;
+      for (const sel of submitSelectors) {
+        try {
+          const loc = page.locator(sel).first();
+          if ((await loc.count()) > 0) {
+            const disabled = await loc
+              .getAttribute("disabled")
+              .catch(() => null);
+            if (disabled !== null) continue;
+            await loc.click({ timeout: 5_000 });
+            submitClicked = true;
+            break;
+          }
+        } catch {}
+      }
+      if (!submitClicked) {
+        submitClicked = await page.evaluate(() => {
+          const btns = Array.from(
+            document.querySelectorAll(
+              "button, [role='button'], div[class*='cursor-pointer'], div[class*='bg-#28B894']",
+            ),
+          );
+          for (const b of btns) {
+            if (b.disabled || b.getAttribute("aria-disabled") === "true")
+              continue;
+            const r = b.getBoundingClientRect();
+            if (r.width < 20 || r.height < 20) continue;
+            const t = (b.textContent || "").trim().toLowerCase();
+            if (/submit|get started|start|continue|confirm|ok|next/.test(t)) {
+              b.click();
+              return true;
+            }
+          }
+          return false;
+        });
+      }
+      console.log(`${tag} iter ${i + 1} submit clicked=${submitClicked}`);
+
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const u = page.url();
+        const inputStillThere = await page
+          .locator('input[placeholder="Registration location"]')
+          .count()
+          .then((c) => c > 0)
+          .catch(() => false);
+        if (!u.includes("/register/user/complete") && !inputStillThere) {
+          console.log(`${tag} region done, url=${u}`);
+          await page.waitForTimeout(1500);
+          return true;
+        }
+        await page.waitForTimeout(500);
+      }
+    } catch (err) {
+      console.log(`${tag} iter ${i + 1} error: ${err?.message || err}`);
+    }
+    await page.waitForTimeout(2000);
+  }
+  return false;
+}
+
+/**
  * Default connection saver for CodeBuddy. Stores the API key as the
  * access token — the only credential CodeBuddy automation produces.
  */
@@ -140,6 +281,39 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       proxyUrl,
       proxyPoolIds,
     });
+  }
+
+  /**
+   * Override cancelJob to actively tear down in-flight browser sessions.
+   * Base only flips `cancelRequested`; workers blocked inside
+   * `runGoogleAccountAutomation` won't observe it until Playwright ops
+   * timeout. Closing context/browser forces those awaits to reject so the
+   * worker loop exits immediately.
+   */
+  async cancelJob(jobId) {
+    const job = this.jobs.get(jobId);
+    if (!job) return super.cancelJob(jobId);
+
+    job.cancelRequested = true;
+    if (job.status === "queued") {
+      job.status = "cancelled";
+      job.finishedAt = new Date().toISOString();
+      job.accounts.forEach((account) => {
+        if (account.status === "queued") account.status = "cancelled";
+      });
+    }
+
+    for (const account of job.accounts) {
+      const session = account.runtimeSession || account.manualSession;
+      if (session) {
+        const { context, browser } = session;
+        if (context) void context.close().catch(() => null);
+        if (browser) void browser.close().catch(() => null);
+      }
+    }
+
+    void this.persistJobSnapshot(job, { forcePreview: true });
+    return this.getJob(jobId);
   }
 
   async processAccount(job, account, _workerId) {
@@ -494,10 +668,14 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
             return;
           }
           const url = page.url();
-          if (
+          // Success = balik ke codebuddy.ai DAN sudah di halaman yang bisa
+          // di-handle (bukan intermediate Keycloak). /register/user/complete
+          // JUGA success signal — worker akan lanjut ke step 2b (pilih region).
+          const backOnProvider =
             url.includes("www.codebuddy.ai") &&
-            !url.includes("accounts.google.com")
-          ) {
+            !url.includes("accounts.google.com") &&
+            !url.includes("/auth/realms/");
+          if (backOnProvider) {
             cbHits++;
             if (cbHits >= 2) {
               resolveSuccess({ redirected: true });
@@ -617,6 +795,252 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       await page.waitForTimeout(3000);
       _checkCancel();
 
+      // Step 2b: Kalau kena redirect ke /register/user/complete ATAU
+      // halaman lain tapi ada input "Registration location" (SPA mount
+      // belakangan), pilih region Singapore. Kalau benar-benar tidak,
+      // skip — langsung ke buat API key.
+
+      // Wait URL stabilize dulu.
+      for (let i = 0; i < 10; i++) {
+        _checkCancel();
+        const u = page.url();
+        if (
+          u.includes("/home") ||
+          u.includes("/register/user/complete") ||
+          u.includes("/profile") ||
+          u.includes("/console")
+        ) {
+          break;
+        }
+        await page.waitForTimeout(1000);
+      }
+
+      // Detect region page — bisa URL /register/user/complete, atau halaman
+      // lain tapi ada input "Registration location" (SPA render telat).
+      const postLoginUrl = page.url();
+      let needsRegionSelect = postLoginUrl.includes("/register/user/complete");
+      if (!needsRegionSelect) {
+        const inputFound = await page
+          .locator('input[placeholder="Registration location"]')
+          .count()
+          .then((c) => c > 0)
+          .catch(() => false);
+        if (inputFound) {
+          needsRegionSelect = true;
+          console.log(
+            `[codebuddy-bulk] ${account.email} region input found despite url=${postLoginUrl}`,
+          );
+        }
+      }
+      console.log(
+        `[codebuddy-bulk] ${account.email} post-login url=${postLoginUrl} needsRegion=${needsRegionSelect}`,
+      );
+
+      if (needsRegionSelect) {
+        try {
+          // Pilih region via klik dropdown DOM (bukan API — API return 200
+          // tapi backend tak beneran commit tanpa SPA state update). Flow:
+          //   1. Klik input placeholder="Registration location"
+          //   2. Klik opsi Singapore di dropdown yang muncul
+          //   3. Klik tombol submit (Get started / Confirm / OK / dll)
+          let regionHandled = false;
+          for (let i = 0; i < 10 && !regionHandled; i++) {
+            _checkCancel();
+            const preKeysUrl = page.url();
+            const needsRegion =
+              preKeysUrl.includes("/register/user/complete") ||
+              preKeysUrl.includes("/register/user/");
+
+            // Kalau URL bukan /register/user/complete, cek apakah input
+            // region masih ada (SPA render telat atau sticky).
+            let inputPresent = false;
+            if (!needsRegion) {
+              inputPresent = await page
+                .locator('input[placeholder="Registration location"]')
+                .count()
+                .then((c) => c > 0)
+                .catch(() => false);
+            }
+
+            console.log(
+              `[codebuddy-bulk] ${account.email} step 2b iter ${i + 1} url=${preKeysUrl} needsRegion=${needsRegion} inputPresent=${inputPresent}`,
+            );
+
+            if (!needsRegion && !inputPresent) {
+              regionHandled = true;
+              break;
+            }
+
+            this.setAccountStep(
+              account,
+              "completing_region",
+              "Completing CodeBuddy region (Singapore)",
+            );
+            await this.persistJobSnapshot(job, { forcePreview: true });
+
+            try {
+              // 1) Klik input Registration location untuk buka dropdown
+              const inputSel =
+                'input[placeholder="Registration location"], input.t-input__inner[readonly]';
+              await page.waitForSelector(inputSel, { timeout: 15_000 });
+              const regionInput = page.locator(inputSel).first();
+              await regionInput.scrollIntoViewIfNeeded().catch(() => {});
+              await page.waitForTimeout(400);
+              await regionInput.click({ timeout: 8_000 });
+              await page.waitForTimeout(1200);
+
+              // 2) Klik opsi Singapore
+              const optionSelectors = [
+                'li:has-text("Singapore")',
+                '[role="option"]:has-text("Singapore")',
+                '.t-select-option:has-text("Singapore")',
+                'ul.dropdown-section li:has-text("Singapore")',
+                '.dropdown-section li:has-text("Singapore")',
+                '[class*="option"]:has-text("Singapore")',
+              ];
+              let sgClicked = false;
+              for (const sel of optionSelectors) {
+                try {
+                  const loc = page.locator(sel).first();
+                  if ((await loc.count()) > 0) {
+                    await loc.scrollIntoViewIfNeeded().catch(() => {});
+                    await loc.click({ timeout: 5_000 });
+                    sgClicked = true;
+                    break;
+                  }
+                } catch {}
+              }
+              if (!sgClicked) {
+                // DOM scan fallback
+                sgClicked = await page.evaluate(() => {
+                  const els = Array.from(
+                    document.querySelectorAll(
+                      "li, [role='option'], .t-select-option, div, span",
+                    ),
+                  );
+                  for (const el of els) {
+                    const txt = (el.textContent || "").trim();
+                    if (/^singapore$/i.test(txt)) {
+                      const r = el.getBoundingClientRect();
+                      if (r.width > 0 && r.height > 0) {
+                        el.click();
+                        return true;
+                      }
+                    }
+                  }
+                  return false;
+                });
+              }
+              console.log(
+                `[codebuddy-bulk] ${account.email} region: Singapore clicked=${sgClicked}`,
+              );
+              if (!sgClicked) {
+                await page.waitForTimeout(2000);
+                continue;
+              }
+              await page.waitForTimeout(800);
+
+              // 3) Klik submit — coba berbagai variant
+              const submitSelectors = [
+                'button:has-text("Get started")',
+                'button:has-text("Get Started")',
+                'button:has-text("Start")',
+                'button:has-text("Submit")',
+                'button:has-text("Continue")',
+                'button:has-text("Confirm")',
+                'button:has-text("OK")',
+                'button:has-text("Ok")',
+                ".page-region button.t-button--primary",
+                ".page-region button:not([disabled])",
+                "button.t-button--primary",
+                'button[type="submit"]',
+              ];
+              let submitClicked = false;
+              for (const sel of submitSelectors) {
+                try {
+                  const loc = page.locator(sel).first();
+                  if ((await loc.count()) > 0) {
+                    const disabled = await loc
+                      .getAttribute("disabled")
+                      .catch(() => null);
+                    if (disabled !== null) continue;
+                    await loc.click({ timeout: 5_000 });
+                    submitClicked = true;
+                    break;
+                  }
+                } catch {}
+              }
+              if (!submitClicked) {
+                submitClicked = await page.evaluate(() => {
+                  const btns = Array.from(
+                    document.querySelectorAll("button, [role='button']"),
+                  );
+                  for (const b of btns) {
+                    if (
+                      b.disabled ||
+                      b.getAttribute("aria-disabled") === "true"
+                    )
+                      continue;
+                    const r = b.getBoundingClientRect();
+                    if (r.width < 20 || r.height < 20) continue;
+                    const t = (b.textContent || "").trim().toLowerCase();
+                    if (
+                      /get started|start|submit|continue|confirm|ok|next|\u786e\u5b9a|\u63d0\u4ea4/.test(
+                        t,
+                      )
+                    ) {
+                      b.click();
+                      return true;
+                    }
+                  }
+                  return false;
+                });
+              }
+              console.log(
+                `[codebuddy-bulk] ${account.email} region: submit clicked=${submitClicked}`,
+              );
+
+              // 4) Tunggu URL berubah keluar dari /register/user/complete
+              const deadline = Date.now() + 15_000;
+              while (Date.now() < deadline) {
+                const u = page.url();
+                if (
+                  !u.includes("/register/user/complete") &&
+                  !u.includes("/register/user/")
+                ) {
+                  regionHandled = true;
+                  break;
+                }
+                await page.waitForTimeout(500);
+              }
+              if (regionHandled) {
+                console.log(
+                  `[codebuddy-bulk] ${account.email} region done, url=${page.url()}`,
+                );
+                await page.waitForTimeout(1500);
+                break;
+              }
+            } catch (err) {
+              console.log(
+                `[codebuddy-bulk] ${account.email} region attempt ${i + 1} error: ${err?.message || err}`,
+              );
+            }
+            await page.waitForTimeout(2000);
+          }
+
+          if (!regionHandled) {
+            throw new Error(
+              "Region selection failed after 10 attempts — /register/user/complete still active",
+            );
+          }
+        } catch (regionErr) {
+          console.log(
+            `[codebuddy-bulk] ${account.email} region handler error: ${regionErr?.message || regionErr}`,
+          );
+          throw regionErr;
+        }
+      }
+
       // Step 3: Navigate to profile/keys page
       this.setAccountStep(account, "opening_keys", "Opening API keys page");
       await this.persistJobSnapshot(job, { forcePreview: true });
@@ -640,16 +1064,83 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
       };
       page.on("request", sniffHandler);
 
-      await page.goto("https://www.codebuddy.ai/profile/keys", {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
+      try {
+        await page.goto("https://www.codebuddy.ai/profile/keys", {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+      } catch (e) {
+        // SPA may redirect to /register/user/complete before
+        // domcontentloaded — aborted navigation is expected.
+        console.log(
+          `[codebuddy-bulk] ${account.email} keys nav aborted: ${e?.message?.slice(0, 80)}`,
+        );
+      }
       _checkCancel();
 
-      // Give SPA up to 8s to fire its own /api-keys request so we can
-      // capture the auth headers.
-      for (let i = 0; i < 16 && !sniffedHeaders; i++) {
+      // Combined sniff + region guard: wait up to 15s for SPA to fire
+      // its /api-keys request while ALSO monitoring URL. SPA guard may
+      // redirect to /register/user/complete at any point during this
+      // wait — if it does, handle region FIRST, then re-navigate.
+      let guardUrl = page.url();
+      console.log(`[codebuddy-bulk] ${account.email} pre-keys url=${guardUrl}`);
+
+      const keysDeadline = Date.now() + 15_000;
+      while (Date.now() < keysDeadline) {
         await page.waitForTimeout(500);
+        guardUrl = page.url();
+
+        if (guardUrl.includes("/register/user/complete")) {
+          // SPA redirect ke region page — handle sekarang
+          console.log(
+            `[codebuddy-bulk] ${account.email} region page detected during wait — running mouse flow`,
+          );
+          this.setAccountStep(
+            account,
+            "completing_region",
+            "Completing CodeBuddy region (guard)",
+          );
+          await this.persistJobSnapshot(job, { forcePreview: true });
+
+          const ok = await handleRegionSelectionMouse(page, account.email);
+          if (!ok) {
+            throw new Error(
+              "Region selection failed — /register/user/complete still active",
+            );
+          }
+          // Re-navigate ke keys
+          try {
+            await page.goto("https://www.codebuddy.ai/profile/keys", {
+              waitUntil: "domcontentloaded",
+              timeout: 30_000,
+            });
+          } catch (e) {
+            console.log(
+              `[codebuddy-bulk] ${account.email} keys re-nav aborted: ${e?.message?.slice(0, 80)}`,
+            );
+          }
+          await page.waitForTimeout(3000);
+
+          guardUrl = page.url();
+          if (guardUrl.includes("/register/user/complete")) {
+            throw new Error(
+              "Region still present after retry — backend rejected",
+            );
+          }
+          console.log(
+            `[codebuddy-bulk] ${account.email} region cleared, url=${guardUrl}`,
+          );
+          break;
+        }
+
+        // Stop early if headers already sniffed AND URL is stable at
+        // a non-region page (/profile/keys or /home).
+        if (
+          sniffedHeaders &&
+          (guardUrl.includes("/profile/keys") || guardUrl.includes("/home"))
+        ) {
+          break;
+        }
       }
       page.off("request", sniffHandler);
       _checkCancel();

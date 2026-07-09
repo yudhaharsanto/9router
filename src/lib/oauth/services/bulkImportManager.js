@@ -816,7 +816,23 @@ export class BulkImportManager {
     while (!job.cancelRequested) {
       const account = this.dequeueAccount(job, workerId);
       if (!account) return;
-      await this.processAccount(job, account, workerId);
+      try {
+        await this.processAccount(job, account, workerId);
+      } catch (error) {
+        console.error(
+          `[bulk] worker ${workerId} error on ${account.email}: ${error.message}`,
+        );
+        if (account.status === "running") {
+          this.finalizeAccount(account, "failed", {
+            error: error.message,
+            step: "worker_error",
+            message: `Worker ${workerId}: ${error.message}`,
+          });
+        }
+        account.password = undefined;
+        await this.persistJobSnapshot(job, { forcePreview: false });
+        // Worker continues to next account — don't kill the worker
+      }
     }
   }
 

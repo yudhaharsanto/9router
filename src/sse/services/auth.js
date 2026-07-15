@@ -6,8 +6,12 @@ import {
   getApiKeyRpmLimit,
   updateProviderConnection,
   getSettings,
+  getProxyPools,
 } from "@/lib/localDb";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import {
+  resolveConnectionProxyConfig,
+  pickProxyPoolId,
+} from "@/lib/network/connectionProxy";
 import {
   formatRetryAfter,
   checkFallbackError,
@@ -63,8 +67,15 @@ export async function getProviderCredentials(
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const settings = await getSettings();
       const override = (settings.providerStrategies || {})[providerId] || {};
+      const strategy = override.rotateStrategy || "none";
+      let pickedId = override.proxyPoolId || null;
+      if (strategy !== "none") {
+        const allPools = await getProxyPools({ isActive: true });
+        const poolIds = allPools.filter((p) => p.proxyUrl).map((p) => p.id);
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+      }
       const resolvedProxy = await resolveConnectionProxyConfig({
-        proxyPoolId: override.proxyPoolId || "",
+        proxyPoolId: pickedId || "",
       });
       return {
         id: "noauth",

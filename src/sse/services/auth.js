@@ -315,12 +315,13 @@ export async function markAccountUnavailable(
     typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(model, cooldownMs);
 
-  // Credits exhausted (CodeBuddy 14018, or generic "credits exhausted" text)
-  // is a terminal state — cooldown won't help, credits won't refill until user
-  // tops up. Disable connection permanently so rotation skips it.
+  // Terminal quota/credit states — cooldown won't help until user tops up
+  // or renews. Disable connection permanently so rotation skips it.
+  // Includes CodeBuddy 14018, generic credits exhausted, and Grok free-usage
+  // (subscription:free-usage-exhausted / "used all the included free usage").
   const errStr = typeof errorText === "string" ? errorText.toLowerCase() : "";
   const isCreditsExhausted =
-    /credits?\s*exhausted|insufficient\s*(credits?|points?)|out\s*of\s*(credits?|points?)|"code"\s*:\s*14018|积分不足|请充值|余额不足/i.test(
+    /credits?\s*exhausted|insufficient\s*(credits?|points?)|out\s*of\s*(credits?|points?)|"code"\s*:\s*14018|积分不足|请充值|余额不足|free-usage-exhausted|used all the included free usage|free usage (?:limit |quota )?exhausted|subscription:free-usage/i.test(
       errStr,
     );
 
@@ -337,10 +338,17 @@ export async function markAccountUnavailable(
   const lockKey = Object.keys(lockUpdate)[0];
   const connName =
     conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
-  log.warn(
-    "AUTH",
-    `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`,
-  );
+  if (isCreditsExhausted) {
+    log.warn(
+      "AUTH",
+      `${connName} disabled (credits/free-usage exhausted) [${status}]`,
+    );
+  } else {
+    log.warn(
+      "AUTH",
+      `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`,
+    );
+  }
 
   if (provider && status && reason) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);

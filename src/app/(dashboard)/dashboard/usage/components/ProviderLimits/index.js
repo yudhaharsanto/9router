@@ -1374,7 +1374,7 @@ const rowBusy =
                       visibility_off
                     </span>
                     <span className="shrink-0">Hidden:</span>
-                    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">
+                    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap pb-2">
                       {hiddenQuotaRows.map((quotaRow) => (
                         <button
                           key={getQuotaVisibilityKey(quotaRow)}

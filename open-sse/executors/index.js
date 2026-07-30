@@ -20,9 +20,13 @@ import { CommandCodeExecutor } from "./commandcode.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
-import { CodeBuddyIntlExecutor } from "./codebuddy.js";
+import { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+import TraeExecutor from "./trae.js";
+import ZedExecutor from "./zed.js";
+import WindsurfExecutor from "./windsurf.js";
 import { AutoClawExecutor } from "./autoclaw.js";
 import { DefaultExecutor } from "./default.js";
+import { DevinCliExecutor } from "./devin-cli.js";
 
 const executors = {
   antigravity: new AntigravityExecutor(),
@@ -52,7 +56,12 @@ const executors = {
   "mimo-free": new MimoFreeExecutor(),
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
-  codebuddy: new CodeBuddyIntlExecutor(),
+  "codebuddy-intl": new CodeBuddyIntlExecutor(),
+  codebuddy: new CodeBuddyIntlExecutor(), // legacy local id → intl
+  trae: new TraeExecutor(),
+  zed: new ZedExecutor(),
+  windsurf: new WindsurfExecutor(),
+  "devin-cli": new DevinCliExecutor(),
   autoclaw: new AutoClawExecutor(),
 };
 
@@ -93,5 +102,9 @@ export { CommandCodeExecutor } from "./commandcode.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
-export { CodeBuddyIntlExecutor } from "./codebuddy.js";
+export { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+export { default as TraeExecutor } from "./trae.js";
+export { default as ZedExecutor } from "./zed.js";
+export { default as WindsurfExecutor } from "./windsurf.js";
+export { DevinCliExecutor } from "./devin-cli.js";
 export { AutoClawExecutor } from "./autoclaw.js";

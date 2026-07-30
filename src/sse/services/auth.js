@@ -409,6 +409,7 @@ export async function clearAccountError(
     Object.assign(clearObj, {
       testStatus: "active",
       lastError: null,
+      errorCode: null,
       lastErrorAt: null,
       backoffLevel: 0,
     });

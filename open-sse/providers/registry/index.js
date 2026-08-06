@@ -34,7 +34,7 @@ import p31 from "./coqui.js";
 import p32 from "./cursor.js";
 import p33 from "./deepgram.js";
 import p34 from "./deepseek.js";
-// import p_hidden_devin_cli from "./devin-cli.js"; // hidden — no tool calling / local agent
+// import p_hidden_devin_cli from "./devin-cli.js"; // hidden
 import p35 from "./edge-tts.js";
 import p36 from "./elevenlabs.js";
 import p37 from "./exa.js";
@@ -89,34 +89,37 @@ import p85 from "./perplexity-web.js";
 import p86 from "./playht.js";
 import p87 from "./poolside.js";
 import p88 from "./qoder.js";
-import p89 from "./qwen.js";
-import p90 from "./recraft.js";
-import p91 from "./runwayml.js";
-import p92 from "./sambanova.js";
-import p93 from "./sdwebui.js";
-import p94 from "./searchapi.js";
-import p95 from "./searxng.js";
-import p96 from "./serper.js";
-import p97 from "./siliconflow.js";
-import p98 from "./stability-ai.js";
-import p99 from "./tavily.js";
-import p100 from "./tencent.js";
-import p101 from "./together.js";
-import p102 from "./topaz.js";
-import p103 from "./tortoise.js";
-// import p_hidden_trae from "./trae.js"; // hidden — no tool calling / local agent
-import p104 from "./venice.js";
-import p105 from "./vercel-ai-gateway.js";
-import p106 from "./vertex.js";
-import p107 from "./vertex-partner.js";
-import p108 from "./volcengine-ark.js";
-import p109 from "./voyage-ai.js";
-// import p_hidden_windsurf from "./windsurf.js"; // hidden — no tool calling / local agent
-import p110 from "./xai.js";
-import p111 from "./xiaomi-mimo.js";
-import p112 from "./xiaomi-tokenplan.js";
-import p113 from "./youcom.js";
-import p114 from "./zed.js";
+import p89 from "./recraft.js";
+import p90 from "./runwayml.js";
+import p91 from "./sambanova.js";
+import p92 from "./sdwebui.js";
+import p93 from "./searchapi.js";
+import p94 from "./searxng.js";
+import p95 from "./selfhosted-embedding.js";
+import p96 from "./selfhosted-stt.js";
+import p97 from "./selfhosted-tts.js";
+import p98 from "./serper.js";
+import p99 from "./siliconflow.js";
+import p100 from "./stability-ai.js";
+import p101 from "./tavily.js";
+import p102 from "./tencent.js";
+import p103 from "./together.js";
+import p104 from "./tokenrouter.js";
+import p105 from "./topaz.js";
+import p106 from "./tortoise.js";
+// import p_hidden_trae from "./trae.js"; // hidden
+import p107 from "./venice.js";
+import p108 from "./vercel-ai-gateway.js";
+import p109 from "./vertex.js";
+import p110 from "./vertex-partner.js";
+import p111 from "./volcengine-ark.js";
+import p112 from "./voyage-ai.js";
+// import p_hidden_windsurf from "./windsurf.js"; // hidden
+import p113 from "./xai.js";
+import p114 from "./xiaomi-mimo.js";
+import p115 from "./xiaomi-tokenplan.js";
+import p116 from "./youcom.js";
+import p117 from "./zed.js";
 
 export default [
   p0,
@@ -234,4 +237,7 @@ export default [
   p112,
   p113,
   p114,
+  p115,
+  p116,
+  p117,
 ];

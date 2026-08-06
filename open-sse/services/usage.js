@@ -14,13 +14,12 @@ import {
 export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits };
 import { getKiroUsage } from "./usage/kiro.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
-import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
-import { getCodeBuddyUsage } from "./usage/codebuddy.js";
+import { getCodeBuddyCnUsage, getCodeBuddyIntlUsage } from "./usage/codebuddy-cn.js";
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
+import { resolveQoderCredentials } from "./qoderModels.js";
 import {
-  getQwenUsage,
   getIflowUsage,
   getOllamaUsage,
   getGlmUsage,
@@ -45,38 +44,23 @@ const USAGE_HANDLERS = {
     getAntigravityUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
-  kiro: (c) =>
-    getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
-  qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
-  qwen: (c) => getQwenUsage(c.accessToken, c.providerSpecificData),
+  kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
+  qoder: async (c) => {
+    // PAT (pt-...) connections must be exchanged to a job token before the
+    // quota endpoint accepts them.
+    const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
+    return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions);
+  },
   iflow: (c) => getIflowUsage(c.accessToken),
-  ollama: (c) => getOllamaUsage(c.accessToken),
+  ollama: (c) => getOllamaUsage(c.apiKey, c.providerSpecificData, c.proxyOptions),
   glm: (c) => getGlmUsage(c.apiKey, c.provider, c.proxyOptions),
   "glm-cn": (c) => getGlmUsage(c.apiKey, c.provider, c.proxyOptions),
   minimax: (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
   "minimax-cn": (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
   "vercel-ai-gateway": (c) => getVercelAiGatewayUsage(c.apiKey, c.proxyOptions),
-  "codebuddy-cn": (c) =>
-    getCodeBuddyCnUsage(
-      c.accessToken,
-      c.apiKey,
-      c.providerSpecificData,
-      c.proxyOptions,
-    ),
-  "codebuddy-intl": (c) =>
-    getCodeBuddyUsage(
-      c.accessToken,
-      c.apiKey,
-      c.providerSpecificData,
-      c.proxyOptions,
-    ),
-  codebuddy: (c) =>
-    getCodeBuddyUsage(
-      c.accessToken,
-      c.apiKey,
-      c.providerSpecificData,
-      c.proxyOptions,
-    ),
+  "codebuddy-cn": (c) => getCodeBuddyCnUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
+  "codebuddy-intl": (c) => getCodeBuddyIntlUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
+  codebuddy: (c) => getCodeBuddyIntlUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
   autoclaw: (c) => getAutoClawUsage(c.accessToken || c.apiKey, c.proxyOptions),
   livscene: (c) => getLivsceneUsage(c, c.proxyOptions),
   "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),

@@ -110,6 +110,16 @@ export function createSSEStream(options = {}) {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
+              // Extract & accumulate usage BEFORE the valuable-content filter.
+              // Some gateways (e.g. inferhub/commandcode aggregators) emit the
+              // final usage in a chunk that has no delta/finish_reason/role, so
+              // hasValuableContent() below would otherwise skip it and the
+              // request would never be recorded in usageHistory (0 tokens).
+              const extracted = extractUsage(parsed);
+              if (extracted) {
+                usage = mergeUsage(usage, extracted);
+              }
+
               const idFixed = fixInvalidId(parsed);
 
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
@@ -161,11 +171,6 @@ export function createSSEStream(options = {}) {
               if (reasoning && typeof reasoning === "string") {
                 totalContentLength += reasoning.length;
                 accumulatedThinking += reasoning;
-              }
-
-              const extracted = extractUsage(parsed);
-              if (extracted) {
-                usage = mergeUsage(usage, extracted);
               }
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;

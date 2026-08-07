@@ -95,10 +95,17 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
  * for long periods while raw bytes still flow (e.g. Kiro EventStream
  * binary frames buffering, Claude reasoning streams).
  */
+// SSE keep-alive comment frame. Injected while waiting for the upstream's first
+// real bytes (slow TTFT) so the client's idle timeout doesn't abort the stream
+// mid-request. Standard SSE comments are ignored by clients; the bytes carry no
+// semantic payload.
+const keepAliveFrame = new TextEncoder().encode(": keep-alive\n\n");
+
 export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
+  let keepaliveTimer = null;
 
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
@@ -110,6 +117,10 @@ export function createDisconnectAwareStream(transformStream, streamController, o
     } catch { /* best-effort terminal */ }
   };
 
+  const clearKeepalive = () => {
+    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+  };
+
   return new ReadableStream({
     async pull(controller) {
       if (!streamController.isConnected()) {
@@ -118,8 +129,19 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         return;
       }
 
+      // Heartbeat every 2s while we wait for upstream bytes, so slow-first-token
+      // responses don't look idle to the client (prevents premature disconnect
+      // and lets usage be recorded via the normal completion path).
+      if (keepAliveFrame && !keepaliveTimer) {
+        keepaliveTimer = setInterval(() => {
+          if (!streamController.isConnected()) return;
+          try { controller.enqueue(keepAliveFrame); } catch { /* already closing */ }
+        }, 2000);
+      }
+
       try {
         const { done, value } = await reader.read();
+        clearKeepalive();
 
         if (done) {
           streamController.handleComplete();
@@ -128,6 +150,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         }
         controller.enqueue(value);
       } catch (error) {
+        clearKeepalive();
         const wasConnected = streamController.isConnected();
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
         const msg0 = error?.message || "";
@@ -165,6 +188,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
     },
 
     cancel(reason) {
+      clearKeepalive();
       streamController.handleDisconnect(reason || "cancelled");
       reader.cancel();
       writer.abort();

@@ -32,15 +32,6 @@ let selectionMutex = Promise.resolve();
 const GITHUB_MONTHLY_USAGE_LIMIT =
   "you've reached your additional usage limit for your plan";
 
-const GROK_FREE_USAGE_EXHAUSTED = "subscription:free-usage-exhausted";
-
-function isGrokFreeUsageExhausted(status, errorText, provider) {
-  if (!["grok-cli", "grok-web"].includes(resolveProviderId(provider)))
-    return false;
-  if (Number(status) !== 429) return false;
-  return String(errorText || "").includes(GROK_FREE_USAGE_EXHAUSTED);
-}
-
 function githubMonthlyResetMs(status, errorText, provider) {
   if (resolveProviderId(provider) !== "github" || Number(status) !== 402)
     return null;
@@ -323,32 +314,6 @@ export async function markAccountUnavailable(
 
   // GitHub premium-request exhaustion is account-wide until the next UTC month.
   const githubResetAtMs = githubMonthlyResetMs(status, errorText, provider);
-
-  // Grok free-usage exhaustion (429 subscription:free-usage-exhausted) means the
-  // connection has no usable quota — disable it instead of a timed lock.
-  if (isGrokFreeUsageExhausted(status, errorText, provider) && conn) {
-    const disabledReason =
-      typeof errorText === "string"
-        ? errorText.slice(0, 100)
-        : "Grok free usage exhausted";
-    await updateProviderConnection(connectionId, {
-      isActive: false,
-      testStatus: "unavailable",
-      lastError: disabledReason,
-      errorCode: status,
-      lastErrorAt: new Date().toISOString(),
-    });
-    const connName =
-      conn?.displayName ||
-      conn?.name ||
-      conn?.email ||
-      connectionId.slice(0, 8);
-    log.warn(
-      "AUTH",
-      `${connName} disabled — grok free usage exhausted [${status}]`,
-    );
-    return { shouldFallback: true, cooldownMs: 0 };
-  }
 
   // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
   let shouldFallback, cooldownMs, newBackoffLevel;

@@ -32,6 +32,9 @@ export async function POST(request) {
   } catch {}
 
   const response = await handleChat(request);
+  // Error responses (401/429/5xx JSON) must pass through untouched — piping
+  // them through the SSE transform would fake a successful empty completion.
+  if (!response.ok) return response;
   return transformToOllama(response, modelName);
 }
 

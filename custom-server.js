@@ -89,6 +89,12 @@ http.createServer = (...args) => {
       socket.destroy();
       return true;
     }
+    // A chunked (or otherwise bodyless-length) h2c upgrade can't be replayed —
+    // reject rather than silently dropping the request body.
+    if (String(req.headers["transfer-encoding"] || "").toLowerCase() === "chunked") {
+      socket.destroy();
+      return true;
+    }
     const chunks = [head];
     let received = head.length;
     const serve = () => {
@@ -113,8 +119,15 @@ http.createServer = (...args) => {
         received += chunk.length;
         if (received < contentLength) return;
         socket.off("data", readBody);
+        clearTimeout(bodyTimer);
         serve();
       });
+      // Client disconnected mid-body: don't wait forever, serve what arrived
+      // (handler 400s on a short body) or tear the socket down.
+      const bodyTimer = setTimeout(() => { socket.off("data", readBody); socket.destroy(); }, 15_000);
+      socket.once("end", () => { clearTimeout(bodyTimer); socket.off("data", readBody); serve(); });
+      socket.once("error", () => { clearTimeout(bodyTimer); socket.off("data", readBody); socket.destroy(); });
+      socket.once("close", () => { clearTimeout(bodyTimer); socket.off("data", readBody); });
       socket.resume();
     }
     delete req.headers.upgrade;

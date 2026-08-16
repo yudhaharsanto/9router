@@ -400,6 +400,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         try {
           const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
           if (retryResult.response.ok) {
+            await providerResponse.body?.cancel().catch(() => {});
             providerResponse = retryResult.response;
             providerUrl = retryResult.url;
             providerResponseFormat = retryResult.responseFormat || targetFormat;

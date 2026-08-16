@@ -16,9 +16,12 @@ test("formatX509Certificate normalizes Base64 strings into PEM blocks", () => {
   assert.equal(formatX509Certificate(""), "");
 });
 
-test("isSamlConfigured checks required fields", () => {
-  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso", samlCert: "cert" }), true);
-  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso" }), false);
+test("isSamlConfigured checks required fields and authMode", () => {
+  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso", samlCert: "cert", authMode: "saml" }), true);
+  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso", samlCert: "cert", authMode: "both" }), true);
+  // Password-only mode must not enable SAML, even with leftover config
+  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso", samlCert: "cert", authMode: "password" }), false);
+  assert.equal(isSamlConfigured({ samlEntryPoint: "https://idp.com/sso", authMode: "saml" }), false);
   assert.equal(isSamlConfigured({}), false);
 });
 

@@ -38,9 +38,17 @@ function isBlockedIpv4(host) {
 
 function isBlockedIpv6(host) {
   const h = host.replace(/^\[|\]$/g, "").toLowerCase();
-  const v4Mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4Mapped) return isBlockedIpv4(v4Mapped[1]);
   if (h === "::1" || h === "::") return true;
+  // Dotted v4-mapped / v4-compatible: ::ffff:127.0.0.1 or ::127.0.0.1
+  const dottedV4 = h.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
+  if (dottedV4) return isBlockedIpv4(dottedV4[1]);
+  // Hex v4-mapped / v4-compatible: ::ffff:7f00:1 or ::7f00:1 → 127.0.0.1
+  const hexV4 = h.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexV4) {
+    const high = parseInt(hexV4[1], 16);
+    const low = parseInt(hexV4[2], 16);
+    return isBlockedIpv4(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+  }
   return h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd");
 }
 

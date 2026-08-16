@@ -1,5 +1,27 @@
 import { SAML } from "@node-saml/node-saml";
 import { getSettings } from "../db/repos/settingsRepo.js";
+import { makeKv } from "../db/helpers/kvStore.js";
+
+// Server-side record of issued AuthnRequest IDs. The IdP ACS callback is a
+// cross-site POST, so SameSite=Lax cookies never arrive with it — the cookie
+// check alone can't protect against replay. We store the requestId instead.
+const samlRequestKv = makeKv("samlRequestIds");
+const SAML_REQUEST_TTL_MS = 10 * 60 * 1000; // matches saml_state cookie maxAge
+
+export async function registerSamlRequestId(requestId) {
+  if (!requestId) return;
+  await samlRequestKv.set(requestId, String(Date.now()));
+}
+
+// Returns true once, then deletes — a second validation with the same
+// requestId (replay) fails.
+export async function consumeSamlRequestId(requestId) {
+  if (!requestId) return false;
+  const created = Number(await samlRequestKv.get(requestId)) || 0;
+  await samlRequestKv.remove(requestId);
+  if (!created) return false;
+  return Date.now() - created < SAML_REQUEST_TTL_MS;
+}
 
 /**
  * Formats a raw Base64 string or unformatted X.509 certificate into standard PEM format.
@@ -25,7 +47,9 @@ export function formatX509Certificate(certStr) {
  * @returns {boolean}
  */
 export function isSamlConfigured(settings) {
-  return Boolean(settings?.samlEntryPoint && settings?.samlCert);
+  const mode = settings?.authMode;
+  const samlEnabled = mode === "saml" || mode === "sso" || mode === "both";
+  return Boolean(samlEnabled && settings?.samlEntryPoint && settings?.samlCert);
 }
 
 /**
@@ -53,6 +77,22 @@ function trimTrailingSlashes(str) {
   return (str || "").replace(/\/+$/, "");
 }
 
+// Only trust forwarding headers when the TCP peer is a local reverse proxy
+// (same rule as loginLimiter TRUST_PROXY). Otherwise a client-supplied
+// Host/x-forwarded-host would redirect post-login to an attacker's origin.
+function isTrustedRequestHost(host) {
+  if (!host) return false;
+  const hostname = (
+    host.startsWith("[") ? host.slice(1).split("]")[0] : host.split(":")[0]
+  ).toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    process.env.TRUST_PROXY === "true"
+  );
+}
+
 /**
  * Resolves the public Base URL / Origin for SAML requests.
  * Respects settings.baseUrl, process.env.BASE_URL, x-forwarded-proto, and x-forwarded-host.
@@ -75,11 +115,15 @@ export function getSamlBaseUrl(request, settings) {
     const forwardedProto = request?.headers?.get?.("x-forwarded-proto") || "";
     const forwardedHost = request?.headers?.get?.("x-forwarded-host") || "";
     const host = forwardedHost || request?.headers?.get?.("host") || "";
-    if (host) {
-      const protocol = (forwardedProto || new URL(request.url).protocol || "http:").replace(/:$/, "");
+    if (host && isTrustedRequestHost(host)) {
+      const protocol = (
+        forwardedProto ||
+        new URL(request.url).protocol ||
+        "http:"
+      ).replace(/:$/, "");
       return `${protocol}://${host}`.replace(/\/+$/, "");
     }
-    if (request.url) {
+    if (request.url && isTrustedRequestHost(new URL(request.url).host)) {
       return trimTrailingSlashes(new URL(request.url).origin);
     }
   }
@@ -88,7 +132,8 @@ export function getSamlBaseUrl(request, settings) {
 }
 
 export function createSamlInstance(settings, origin) {
-  const cert = formatX509Certificate(settings?.samlCert || "") || DUMMY_FALLBACK_CERT;
+  const cert =
+    formatX509Certificate(settings?.samlCert || "") || DUMMY_FALLBACK_CERT;
   const callbackUrl = `${origin}/api/auth/saml/acs`;
   return new SAML({
     entryPoint: settings?.samlEntryPoint || "https://example.com/sso",
@@ -117,7 +162,14 @@ export async function buildSamlAuthorizeUrl(request, settings) {
   const match = xml.match(/ID="([^"]+)"/);
   const requestId = match ? match[1] : "";
 
-  const authorizeUrl = await samlInstance._requestToUrlAsync(xml, null, "authorize", {});
+  await registerSamlRequestId(requestId);
+
+  const authorizeUrl = await samlInstance._requestToUrlAsync(
+    xml,
+    null,
+    "authorize",
+    {},
+  );
 
   return { authorizeUrl, requestId };
 }
@@ -130,33 +182,52 @@ export async function buildSamlAuthorizeUrl(request, settings) {
  * @param {object} settings
  * @returns {Promise<object>}
  */
-export async function validateSamlResponse(request, body, expectedRequestId, settings) {
+export async function validateSamlResponse(
+  request,
+  body,
+  expectedRequestId,
+  settings,
+) {
   if (!settings?.samlCert) {
-    throw new Error("IdP X.509 Certificate (samlCert) is missing or not configured");
+    throw new Error(
+      "IdP X.509 Certificate (samlCert) is missing or not configured",
+    );
   }
 
   const origin = getSamlBaseUrl(request, settings);
   const samlInstance = createSamlInstance(settings, origin);
 
-  const container = typeof body === "object" && body !== null ? body : { SAMLResponse: body };
+  const container =
+    typeof body === "object" && body !== null ? body : { SAMLResponse: body };
   const rawSamlResponse = container.SAMLResponse;
 
   if (!rawSamlResponse) {
     throw new Error("Missing SAMLResponse parameter in assertion POST body");
   }
 
-  // Parse response XML to inspect InResponseTo for replay protection
-  if (expectedRequestId) {
-    const xml = Buffer.from(rawSamlResponse, "base64").toString("utf8");
-    const match = xml.match(/InResponseTo=["']([^"']+)["']/i);
-    const inResponseTo = match ? match[1] : null;
+  // Replay protection: the response's InResponseTo must match a requestId
+  // issued by /api/auth/saml/start (stored server-side, consumed once).
+  const xml = Buffer.from(rawSamlResponse, "base64").toString("utf8");
+  const inResponseTo =
+    (xml.match(/InResponseTo=["']([^"']+)["']/i) || [])[1] || null;
 
-    if (!inResponseTo || inResponseTo !== expectedRequestId) {
-      throw new Error(`InResponseTo mismatch: expected ${expectedRequestId}, received ${inResponseTo || "none"}`);
-    }
+  if (!inResponseTo) {
+    throw new Error("SAML assertion missing InResponseTo (replay protection)");
+  }
+  if (!(await consumeSamlRequestId(inResponseTo))) {
+    throw new Error(
+      "InResponseTo does not match any issued request (possible replay)",
+    );
+  }
+  if (expectedRequestId && inResponseTo !== expectedRequestId) {
+    throw new Error(
+      `InResponseTo mismatch: expected ${expectedRequestId}, received ${inResponseTo}`,
+    );
   }
 
-  const result = await samlInstance.validatePostResponseAsync({ SAMLResponse: rawSamlResponse });
+  const result = await samlInstance.validatePostResponseAsync({
+    SAMLResponse: rawSamlResponse,
+  });
   const profile = result?.profile || result;
 
   return profile;

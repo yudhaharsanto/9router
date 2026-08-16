@@ -1,34 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
-function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
-  const borderColor = testStatus === "ok"
-    ? "border-green-500/40"
-    : testStatus === "error"
-    ? "border-red-500/40"
-    : "border-border";
+function CompatibleModelRow({
+  modelId,
+  fullModel,
+  copied,
+  onCopy,
+  onDeleteAlias,
+  onTest,
+  testStatus,
+  isTesting,
+}) {
+  const borderColor =
+    testStatus === "ok"
+      ? "border-green-500/40"
+      : testStatus === "error"
+        ? "border-red-500/40"
+        : "border-border";
 
-  const iconColor = testStatus === "ok"
-    ? "#22c55e"
-    : testStatus === "error"
-    ? "#ef4444"
-    : undefined;
+  const iconColor =
+    testStatus === "ok"
+      ? "#22c55e"
+      : testStatus === "error"
+        ? "#ef4444"
+        : undefined;
 
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-lg border ${borderColor} hover:bg-sidebar/50`}>
+    <div
+      className={`flex items-center gap-3 p-3 rounded-lg border ${borderColor} hover:bg-sidebar/50`}
+    >
       <span
         className="material-symbols-outlined text-base text-text-muted"
         style={iconColor ? { color: iconColor } : undefined}
       >
-        {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
+        {testStatus === "ok"
+          ? "check_circle"
+          : testStatus === "error"
+            ? "cancel"
+            : "smart_toy"}
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{modelId}</p>
         <div className="flex items-center gap-1 mt-1">
-          <code className="text-xs text-text-muted font-mono bg-sidebar px-1.5 py-0.5 rounded">{fullModel}</code>
+          <code className="text-xs text-text-muted font-mono bg-sidebar px-1.5 py-0.5 rounded">
+            {fullModel}
+          </code>
           <div className="relative group/btn">
             <button
               onClick={() => onCopy(fullModel, `model-${modelId}`)}
@@ -49,7 +68,14 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
                 disabled={isTesting}
                 className="p-0.5 hover:bg-sidebar rounded text-text-muted hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-sm" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
+                <span
+                  className="material-symbols-outlined text-sm"
+                  style={
+                    isTesting
+                      ? { animation: "spin 1s linear infinite" }
+                      : undefined
+                  }
+                >
                   {isTesting ? "progress_activity" : "science"}
                 </span>
               </button>
@@ -71,12 +97,68 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
   );
 }
 
-export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
+export default function CompatibleModelsSection({
+  providerStorageAlias,
+  providerDisplayAlias,
+  modelAliases,
+  customModels,
+  copied,
+  onCopy,
+  onDeleteAlias,
+  onAddCustomModel,
+  onDeleteCustomModel,
+  connections,
+  isAnthropic,
+}) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
+
+  const allModels = getProviderCustomModelRows({
+    customModels,
+    modelAliases,
+    providerAlias: providerStorageAlias,
+    type: "llm",
+  });
+
+  // Auto-import models from InferHub (openai-compatible node pointing at
+  // api.inferhub.dev) on page load so new catalog entries show up without a
+  // manual "Import from /models" click. Runs once per mounted connection list.
+  const autoSyncedRef = useRef(null);
+  useEffect(() => {
+    if (autoSyncedRef.current) return;
+    const active = connections.find((conn) => conn.isActive !== false);
+    if (!active) return;
+    const baseUrl = active.providerSpecificData?.baseUrl || "";
+    if (!baseUrl.includes("api.inferhub.dev")) return;
+    autoSyncedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/providers/${active.id}/models`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const models = data.models || [];
+        if (models.length === 0) return;
+        const seen = new Set(allModels.map((m) => m.id));
+        for (const model of models) {
+          if (cancelled) break;
+          const modelId = model.id || model.name || model.model;
+          if (!modelId || seen.has(modelId)) continue;
+          seen.add(modelId);
+          await onAddCustomModel(modelId);
+        }
+      } catch {
+        /* auto-sync is best-effort */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per connection list
+  }, [connections]);
 
   const handleTestModel = async (modelId) => {
     if (testingModelId) return;
@@ -88,20 +170,16 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         body: JSON.stringify({ model: `${providerStorageAlias}/${modelId}` }),
       });
       const data = await res.json();
-      setModelTestResults((prev) => ({ ...prev, [modelId]: data.ok ? "ok" : "error" }));
+      setModelTestResults((prev) => ({
+        ...prev,
+        [modelId]: data.ok ? "ok" : "error",
+      }));
     } catch {
       setModelTestResults((prev) => ({ ...prev, [modelId]: "error" }));
     } finally {
       setTestingModelId(null);
     }
   };
-
-  const allModels = getProviderCustomModelRows({
-    customModels,
-    modelAliases,
-    providerAlias: providerStorageAlias,
-    type: "llm",
-  });
 
   const handleAdd = async () => {
     if (!newModel.trim() || adding) return;
@@ -124,7 +202,9 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
 
   const handleImport = async () => {
     if (importing) return;
-    const activeConnection = connections.find((conn) => conn.isActive !== false);
+    const activeConnection = connections.find(
+      (conn) => conn.isActive !== false,
+    );
     if (!activeConnection) return;
 
     setImporting(true);
@@ -163,12 +243,18 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">
-        Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or import them from the /models endpoint.
+        Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or
+        import them from the /models endpoint.
       </p>
 
       <div className="flex items-end gap-2 flex-wrap">
         <div className="flex-1 min-w-[240px]">
-          <label htmlFor="new-compatible-model-input" className="text-xs text-text-muted mb-1 block">Model ID</label>
+          <label
+            htmlFor="new-compatible-model-input"
+            className="text-xs text-text-muted mb-1 block"
+          >
+            Model ID
+          </label>
           <input
             id="new-compatible-model-input"
             type="text"
@@ -179,10 +265,21 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
             className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
           />
         </div>
-        <Button size="sm" icon="add" onClick={handleAdd} disabled={!newModel.trim() || adding}>
+        <Button
+          size="sm"
+          icon="add"
+          onClick={handleAdd}
+          disabled={!newModel.trim() || adding}
+        >
           {adding ? "Adding..." : "Add"}
         </Button>
-        <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon="download"
+          onClick={handleImport}
+          disabled={!canImport || importing}
+        >
           {importing ? "Importing..." : "Import from /models"}
         </Button>
       </div>
@@ -202,8 +299,14 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
               fullModel={`${providerDisplayAlias}/${id}`}
               copied={copied}
               onCopy={onCopy}
-              onDeleteAlias={() => source === "custom" ? onDeleteCustomModel(id) : onDeleteAlias(alias)}
-              onTest={connections.length > 0 ? () => handleTestModel(id) : undefined}
+              onDeleteAlias={() =>
+                source === "custom"
+                  ? onDeleteCustomModel(id)
+                  : onDeleteAlias(alias)
+              }
+              onTest={
+                connections.length > 0 ? () => handleTestModel(id) : undefined
+              }
               testStatus={modelTestResults[id]}
               isTesting={testingModelId === id}
             />
@@ -224,9 +327,11 @@ CompatibleModelsSection.propTypes = {
   onDeleteAlias: PropTypes.func.isRequired,
   onAddCustomModel: PropTypes.func.isRequired,
   onDeleteCustomModel: PropTypes.func.isRequired,
-  connections: PropTypes.arrayOf(PropTypes.shape({
-    id: PropTypes.string,
-    isActive: PropTypes.bool,
-  })).isRequired,
+  connections: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string,
+      isActive: PropTypes.bool,
+    }),
+  ).isRequired,
   isAnthropic: PropTypes.bool,
 };

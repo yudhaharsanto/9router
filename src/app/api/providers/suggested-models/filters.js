@@ -2,6 +2,13 @@
 const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 
 export const FILTERS = {
+  // Standard OpenAI GET /v1/models shape: { data: [{ id, name?, ... }] }
+  "openai": (models) =>
+    (Array.isArray(models) ? models : [])
+      .filter((m) => m?.id)
+      .map((m) => ({ id: m.id, name: m.name || m.id }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+
   "openrouter-free": (models) =>
     models
       .filter(

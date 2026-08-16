@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">InferHub</title>
+  <desc id="desc">Asymmetric geometric hub-and-spoke icon.</desc>
+
+  <g fill="none" stroke="#000" stroke-linecap="round">
+    <line x1="252" y1="250" x2="160" y2="136" stroke-width="18"/>
+    <line x1="252" y1="250" x2="344" y2="70" stroke-width="24"/>
+    <line x1="252" y1="250" x2="410" y2="220" stroke-width="16"/>
+    <line x1="252" y1="250" x2="372" y2="386" stroke-width="22"/>
+    <line x1="252" y1="250" x2="134" y2="384" stroke-width="18"/>
+  </g>
+
+  <g fill="#000">
+    <circle cx="252" cy="250" r="62"/>
+    <circle cx="160" cy="136" r="27"/>
+    <circle cx="344" cy="70" r="37"/>
+    <circle cx="410" cy="220" r="24"/>
+    <circle cx="372" cy="386" r="32"/>
+    <circle cx="134" cy="384" r="25"/>
+  </g>
+</svg>

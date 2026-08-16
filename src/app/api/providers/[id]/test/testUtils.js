@@ -1311,6 +1311,21 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
           refreshed: false,
         };
       }
+      case "inferhub": {
+        // OpenAI-compatible model marketplace — a GET /v1/models with the key
+        // proves auth (same as the model picker does).
+        const res = await fetchWithConnectionProxy(
+          "https://api.inferhub.dev/v1/models",
+          {
+            headers: { Authorization: `Bearer ${connection.apiKey}` },
+          },
+          effectiveProxy,
+        );
+        return {
+          valid: res.ok,
+          error: res.ok ? null : "Invalid API key",
+        };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }

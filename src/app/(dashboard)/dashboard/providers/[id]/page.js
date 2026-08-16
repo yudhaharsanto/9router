@@ -612,11 +612,13 @@ export default function ProviderDetailPage() {
     };
   }, [providerId, connections]);
 
-  // AutoClaw/CodeBuddy: fetch balance per connection so we can render it inline
-  // next to each connection row. Refreshed on mount.
+  // AutoClaw/CodeBuddy/InferHub: fetch balance per connection so we can render
+  // it inline next to each connection row. Refreshed on mount.
   useEffect(() => {
     if (
-      !["autoclaw", "codebuddy", "codebuddy-cn"].includes(providerId) ||
+      !["autoclaw", "codebuddy", "codebuddy-cn", "inferhub"].includes(
+        providerId,
+      ) ||
       connections.length === 0
     )
       return;
@@ -625,12 +627,25 @@ export default function ProviderDetailPage() {
       const entries = await Promise.all(
         connections.map(async (conn) => {
           try {
-            const res = await fetch(`/api/usage/${conn.id}`);
+            const res =
+              providerId === "inferhub"
+                ? await fetch(
+                    `/api/providers/inferhub/balance?connectionId=${conn.id}`,
+                  )
+                : await fetch(`/api/usage/${conn.id}`);
             if (!res.ok) return [conn.id, null];
             const data = await res.json();
             const quotas = data?.quotas || {};
             let remaining = null;
-            if (providerId === "autoclaw") {
+            if (providerId === "inferhub") {
+              const balance = data?.balance?.consumer;
+              remaining =
+                typeof balance === "string"
+                  ? { amount: Number(balance), currency: "USDC" }
+                  : data?.message
+                    ? { message: data.message }
+                    : null;
+            } else if (providerId === "autoclaw") {
               remaining = quotas["Points"]?.remaining;
             } else {
               // CodeBuddy: show first quota as used/total (prefer recurring)
@@ -1260,7 +1275,9 @@ export default function ProviderDetailPage() {
               isFirst={index === 0}
               isLast={index === connections.length - 1}
               balance={
-                ["autoclaw", "codebuddy", "codebuddy-cn"].includes(providerId)
+                ["autoclaw", "codebuddy", "codebuddy-cn", "inferhub"].includes(
+                  providerId,
+                )
                   ? inlineBalances[conn.id]
                   : undefined
               }
@@ -1529,7 +1546,7 @@ export default function ProviderDetailPage() {
         </button>
 
         {/* Fetch models button — show for providers that support model listing */}
-        {providerId === "qoder" &&
+        {(providerId === "qoder" || providerId === "inferhub") &&
           connections.some((conn) => conn.isActive !== false) && (
             <button
               onClick={handleImportQoderModels}

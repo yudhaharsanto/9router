@@ -57,6 +57,7 @@ import p54 from "./groq.js";
 import p55 from "./huggingface.js";
 import p56 from "./hyperbolic.js";
 import p57 from "./iflow.js";
+import p_inferhub from "./inferhub.js";
 import p58 from "./inworld.js";
 import p59 from "./jina-ai.js";
 import p60 from "./jina-reader.js";
@@ -181,6 +182,7 @@ export default [
   p55,
   p56,
   p57,
+  p_inferhub,
   p58,
   p59,
   p60,

@@ -116,7 +116,9 @@
     "devin": "devin",
     "devin-cli": "devin-cli",
     "morph": "morph",
-    "morphllm": "morph"
+    "morphllm": "morph",
+    "inferhub": "inferhub",
+    "ih": "inferhub"
   },
   "idToAlias": {
     "alicode": "alicode",
@@ -162,6 +164,7 @@
     "groq": "groq",
     "hyperbolic": "hyperbolic",
     "iflow": "if",
+    "inferhub": "inferhub",
     "kilo-gateway": "kgw",
     "kilocode": "kc",
     "kimchi": "kimchi",

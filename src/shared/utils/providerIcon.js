@@ -7,6 +7,9 @@ const ICON_ALIASES = {
   "vercel-ai-gateway": "vercel",
 };
 
+// Providers whose official icon ships as SVG instead of PNG.
+const SVG_ICONS = new Set(["inferhub"]);
+
 // Runtime only — first 404 remembers id for the whole session
 const failedIds = new Set();
 
@@ -25,10 +28,11 @@ export function resolveProviderIconId(providerId) {
   return aliased;
 }
 
-/** `/providers/{id}.png` or null when previously failed. */
+/** `/providers/{id}.png` (or `.svg`) or null when previously failed. */
 export function getProviderIconSrc(providerId) {
   const id = resolveProviderIconId(providerId);
-  return id ? `/providers/${id}.png` : null;
+  if (!id) return null;
+  return SVG_ICONS.has(id) ? `/providers/${id}.svg` : `/providers/${id}.png`;
 }
 
 /** Call from img onError so later mounts skip the request. */

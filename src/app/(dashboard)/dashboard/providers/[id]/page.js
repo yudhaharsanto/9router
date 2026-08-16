@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
+import {
+  getProviderIconSrc,
+  markProviderIconMissing,
+} from "@/shared/utils/providerIcon";
 import {
   Card,
   Button,
@@ -67,8 +70,8 @@ export default function ProviderDetailPage() {
   const providerId = params.id;
   const { getCaps } = useModelCaps();
   const [connections, setConnections] = useState([]);
-  // AutoClaw/Livscene/CodeBuddy balances keyed by connection.id.
-  // For AutoClaw/Livscene: just remaining (number).
+  // AutoClaw/CodeBuddy balances keyed by connection.id.
+  // For AutoClaw: just remaining (number).
   // For CodeBuddy: { remaining, used, total } object.
   const [inlineBalances, setInlineBalances] = useState({});
   const [loading, setLoading] = useState(true);
@@ -232,9 +235,10 @@ export default function ProviderDetailPage() {
     !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = providerId === "cursor" && liveModels.length > 0
-    ? liveModels
-    : staticModels;
+  const models =
+    providerId === "cursor" && liveModels.length > 0
+      ? liveModels
+      : staticModels;
   const providerAlias = getProviderAlias(providerId);
 
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -242,15 +246,21 @@ export default function ProviderDetailPage() {
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
   const oauthConnectionLabel =
-    providerId === "xai" ? "Grok Build OAuth"
-    : providerId === "grok-cli" ? "Grok CLI Device Login"
-    : providerId === "kimi" ? "Kimi Coding OAuth"
-    : "OAuth";
+    providerId === "xai"
+      ? "Grok Build OAuth"
+      : providerId === "grok-cli"
+        ? "Grok CLI Device Login"
+        : providerId === "kimi"
+          ? "Kimi Coding OAuth"
+          : "OAuth";
   const apiKeyConnectionLabel =
-    providerId === "xai" ? "xAI API Key"
-    : providerId === "kimi" ? "Kimi API Key"
-    : providerId === "qoder" ? "PAT"
-    : "API Key";
+    providerId === "xai"
+      ? "xAI API Key"
+      : providerId === "kimi"
+        ? "Kimi API Key"
+        : providerId === "qoder"
+          ? "PAT"
+          : "API Key";
   // Resolve suffix "(level)" for a model when a thinking level is picked and the model supports it.
   const resolveThinkingSuffix = (modelId) => {
     if (!thinkingMode || thinkingMode === "auto") return null;
@@ -567,7 +577,7 @@ export default function ProviderDetailPage() {
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
-// Cursor's model availability is account-specific and changes frequently.
+  // Cursor's model availability is account-specific and changes frequently.
   // Load the active account's live catalog for the dashboard; the static
   // registry remains the fallback while the request is pending or unavailable.
   useEffect(() => {
@@ -586,22 +596,27 @@ export default function ProviderDetailPage() {
     fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
       .then(async (res) => ({ ok: res.ok, data: await res.json() }))
       .then(({ ok, data }) => {
-        if (!cancelled && ok && Array.isArray(data.models) && data.models.length > 0) {
+        if (
+          !cancelled &&
+          ok &&
+          Array.isArray(data.models) &&
+          data.models.length > 0
+        ) {
           setLiveModels(data.models);
         }
       })
       .catch(() => {});
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [providerId, connections]);
 
-  // AutoClaw/Livscene/CodeBuddy: fetch balance per connection so we can render it inline
+  // AutoClaw/CodeBuddy: fetch balance per connection so we can render it inline
   // next to each connection row. Refreshed on mount.
   useEffect(() => {
     if (
-      !["autoclaw", "livscene", "codebuddy", "codebuddy-cn"].includes(
-        providerId,
-      ) ||
+      !["autoclaw", "codebuddy", "codebuddy-cn"].includes(providerId) ||
       connections.length === 0
     )
       return;
@@ -617,8 +632,6 @@ export default function ProviderDetailPage() {
             let remaining = null;
             if (providerId === "autoclaw") {
               remaining = quotas["Points"]?.remaining;
-            } else if (providerId === "livscene") {
-              remaining = quotas["Credits"]?.remaining;
             } else {
               // CodeBuddy: show first quota as used/total (prefer recurring)
               const keys = Object.keys(quotas);
@@ -1247,9 +1260,7 @@ export default function ProviderDetailPage() {
               isFirst={index === 0}
               isLast={index === connections.length - 1}
               balance={
-                ["autoclaw", "livscene", "codebuddy", "codebuddy-cn"].includes(
-                  providerId,
-                )
+                ["autoclaw", "codebuddy", "codebuddy-cn"].includes(providerId)
                   ? inlineBalances[conn.id]
                   : undefined
               }
@@ -1518,7 +1529,7 @@ export default function ProviderDetailPage() {
         </button>
 
         {/* Fetch models button — show for providers that support model listing */}
-        {["qoder", "livscene"].includes(providerId) &&
+        {providerId === "qoder" &&
           connections.some((conn) => conn.isActive !== false) && (
             <button
               onClick={handleImportQoderModels}
@@ -1664,9 +1675,13 @@ export default function ProviderDetailPage() {
             className="flex size-12 shrink-0 items-center justify-center rounded-lg"
             style={{ backgroundColor: `${providerInfo.color}15` }}
           >
-{headerImgError || !getHeaderIconPath() ? (
-              <span className="text-sm font-bold" style={{ color: providerInfo.color }}>
-                {providerInfo.textIcon || providerInfo.id.slice(0, 2).toUpperCase()}
+            {headerImgError || !getHeaderIconPath() ? (
+              <span
+                className="text-sm font-bold"
+                style={{ color: providerInfo.color }}
+              >
+                {providerInfo.textIcon ||
+                  providerInfo.id.slice(0, 2).toUpperCase()}
               </span>
             ) : (
               <Image
@@ -1680,8 +1695,8 @@ export default function ProviderDetailPage() {
                   markProviderIconMissing(providerInfo.id);
                   setHeaderImgError(true);
                 }}
-              loading="lazy"
-              decoding="async"
+                loading="lazy"
+                decoding="async"
               />
             )}
           </div>

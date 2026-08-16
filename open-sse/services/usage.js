@@ -29,7 +29,6 @@ import {
   getVercelAiGatewayUsage,
   getQoderUsage,
   getAutoClawUsage,
-  getLivsceneUsage,
 } from "./usage/misc.js";
 
 /**
@@ -91,7 +90,6 @@ const USAGE_HANDLERS = {
       c.proxyOptions,
     ),
   autoclaw: (c) => getAutoClawUsage(c.accessToken || c.apiKey, c.proxyOptions),
-  livscene: (c) => getLivsceneUsage(c, c.proxyOptions),
   "grok-cli": (c) =>
     getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   kimi: (c) =>

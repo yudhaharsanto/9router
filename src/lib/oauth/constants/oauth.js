@@ -140,21 +140,6 @@ export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 // CONFIG-named references used by the OAuth service + providers map working.
 export const AUTOCLOW_CONFIG = { ...PROVIDER_OAUTH["autoclaw"] };
 
-// Livscene Configuration (Google OAuth via ai.livscene.com sign-up page)
-// No registry entry needed — livscene uses its own sign-up page + Google OAuth
-// client. The automation flow: sign-up page → checkbox → Google button →
-// Google login → dashboard → POST /api/token/ to create key → POST
-// /api/token/{id}/key to get full key.
-export const LIVSCENE_CONFIG = {
-  providerId: "livscene",
-  label: "Livscene",
-  baseUrl: "https://ai.livscene.com",
-  googleClientId:
-    "370343779570-r8ar5hcq2f6cf9asc9e0opilgfupmav5.apps.googleusercontent.com",
-  googleRedirectUri: "https://ai.livscene.com/oauth/google-oauth",
-  defaultAff: "Km2H",
-};
-
 // Trae (ByteDance marscode) OAuth — authorization_code flow with local callback.
 //   1) POST GetLoginGuidance {loginTraceID} → {Result.LoginHost}
 //   2) Browser opens ${loginHost}/authorization?client_id=...&login_trace_id=...&auth_callback_url=${cb}
@@ -203,8 +188,10 @@ export const WINDSURF_CONFIG = {
   signInPath: "/windsurf/signin",
   registerApiBaseUrl: "https://register.windsurf.com",
   registerPath: "/exa.seat_management_pb.SeatManagementService/RegisterUser",
-  oneTimeAuthPath: "/exa.seat_management_pb.SeatManagementService/GetOneTimeAuthToken",
-  currentUserPath: "/exa.seat_management_pb.SeatManagementService/GetCurrentUser",
+  oneTimeAuthPath:
+    "/exa.seat_management_pb.SeatManagementService/GetOneTimeAuthToken",
+  currentUserPath:
+    "/exa.seat_management_pb.SeatManagementService/GetCurrentUser",
   planStatusPath: "/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
   userStatusPath: "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
   defaultApiServerUrl: "https://server.codeium.com",
@@ -255,10 +242,8 @@ export const PROVIDERS = {
   CODEBUDDY_INTL: "codebuddy-intl",
   KIMCHI: "kimchi",
   AUTOCLOW: "autoclaw",
-  LIVSCENE: "livscene",
   GROK_CLI: "grok-cli",
   TRAE: "trae",
   WINDSURF: "windsurf",
   ZED: "zed",
-
 };

@@ -20,6 +20,11 @@
       "token": "https://github.com/login/oauth/access_token",
       "auth": "https://github.com/login/oauth/authorize",
       "deviceCode": "https://github.com/login/device/code"
+    },
+    "autoclaw": {
+      "token": "https://autoglm-api.autoglm.ai/userapi/overseasv1/google-oauth-login",
+      "auth": "https://autoglm-api.autoglm.ai/userapi/overseasv1/google-oauth-url",
+      "refresh": "https://autoglm-api.autoglm.ai/userapi/v1/refresh"
     }
   },
   "tokenUrls": {

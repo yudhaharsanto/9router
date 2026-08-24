@@ -118,7 +118,8 @@
     "morph": "morph",
     "morphllm": "morph",
     "inferhub": "inferhub",
-    "ih": "inferhub"
+    "ih": "inferhub",
+    "gnrt": "gnrt"
   },
   "idToAlias": {
     "alicode": "alicode",
@@ -159,6 +160,7 @@
     "gitlab": "gitlab",
     "glm": "glm",
     "glm-cn": "glm-cn",
+    "gnrt": "gnrt",
     "grok-cli": "gcli",
     "grok-web": "grok-web",
     "groq": "groq",

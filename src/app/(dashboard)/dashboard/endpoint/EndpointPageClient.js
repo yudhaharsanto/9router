@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/immutability */
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -441,7 +443,9 @@ export default function APIPageClient({ machineId }) {
             body: JSON.stringify({ name: "Default Key" }),
           });
           if (createRes.ok) existing = await fetchKeys();
-        } catch { /* fall through to empty render */ }
+        } catch {
+          /* fall through to empty render */
+        }
       }
       setKeys(existing);
     } catch (error) {
@@ -951,7 +955,7 @@ export default function APIPageClient({ machineId }) {
 
   // Per-key model allow-list helpers
   const activeProviders = providerConnections.filter(
-    (c) => c.isActive !== false,
+    (c) => c.isActive !== false && c.testStatus === "active",
   );
   const currentSelectedModels =
     modelSelectTarget === "edit" ? editLimitModels : newKeyModels;

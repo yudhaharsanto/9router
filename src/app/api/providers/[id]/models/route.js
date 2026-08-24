@@ -258,6 +258,7 @@ const PROVIDER_MODELS_CONFIG = {
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
   inferhub: createOpenAIModelsConfig("https://api.inferhub.dev/v1/models"),
+  gnrt: createOpenAIModelsConfig("https://api.gnrt.dev/v1/models"),
   kimchi: {
     customResolver: async (connection) => {
       const result = await resolveKimchiModels({

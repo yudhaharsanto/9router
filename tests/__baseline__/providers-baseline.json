@@ -596,6 +596,22 @@
       }
     ]
   },
+  "gnrt": {
+    "baseUrl": "https://api.gnrt.dev/v1/chat/completions",
+    "headers": {},
+    "format": "openai",
+    "transports": [
+      {
+        "format": "openai",
+        "baseUrl": "https://api.gnrt.dev/v1/chat/completions",
+        "auth": {
+          "combined": true,
+          "header": "Authorization",
+          "scheme": "bearer"
+        }
+      }
+    ]
+  },
   "kilo-gateway": {
     "baseUrl": "https://api.kilo.ai/api/gateway/chat/completions",
     "validateUrl": "https://api.kilo.ai/api/gateway/models",

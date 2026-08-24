@@ -8,7 +8,7 @@ const ICON_ALIASES = {
 };
 
 // Providers whose official icon ships as SVG instead of PNG.
-const SVG_ICONS = new Set(["inferhub"]);
+const SVG_ICONS = new Set(["inferhub", "gnrt"]);
 
 // Runtime only — first 404 remembers id for the whole session
 const failedIds = new Set();

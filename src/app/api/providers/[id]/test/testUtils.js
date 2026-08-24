@@ -1326,6 +1326,19 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
           error: res.ok ? null : "Invalid API key",
         };
       }
+      case "gnrt": {
+        const res = await fetchWithConnectionProxy(
+          "https://api.gnrt.dev/v1/models",
+          {
+            headers: { Authorization: `Bearer ${connection.apiKey}` },
+          },
+          effectiveProxy,
+        );
+        return {
+          valid: res.ok,
+          error: res.ok ? null : "Invalid API key",
+        };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }

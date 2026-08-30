@@ -21,11 +21,12 @@ import {
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
+import { getZedUsage } from "./usage/zed.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
+import { getGlmUsage } from "./usage/glm.js";
 import {
   getIflowUsage,
   getOllamaUsage,
-  getGlmUsage,
   getVercelAiGatewayUsage,
   getQoderUsage,
   getAutoClawUsage,
@@ -100,6 +101,7 @@ const USAGE_HANDLERS = {
       c.providerSpecificData,
     ),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
+  zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
 };
 
 export async function getUsageForProvider(

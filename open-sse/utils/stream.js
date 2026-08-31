@@ -196,6 +196,10 @@ export function createSSEStream(options = {}) {
             trimmed.slice(5).trim() === "[DONE]"
           ) {
             streamDoneSent = true;
+            // Clients often close the connection as soon as they see [DONE],
+            // which cancels the reader so flush() never runs. Finalize here so
+            // usage accumulated from prior chunks still gets recorded.
+            finalizeStream();
           }
 
           if (

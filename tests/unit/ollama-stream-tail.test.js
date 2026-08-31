@@ -128,6 +128,58 @@ describe("SSE providers keep their sentinel handling", () => {
     expect(completedUsage).toEqual(usage);
   });
 
+  it("finalizes usage when the client sees data: [DONE] and cancels before flush", async () => {
+    // Real-world failure mode: the client closes on [DONE], the reader is
+    // cancelled, flush() never runs — usage must be finalized in transform().
+    const encoder = new TextEncoder();
+    const usage = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "hi" } }] })}\n`,
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ choices: [], usage })}\n\n`),
+        );
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    let completedUsage = "never-called";
+    const out = stream.pipeThrough(
+      createPassthroughStreamWithLogger(
+        "inferhub",
+        null,
+        "test-model",
+        null,
+        null,
+        (_content, tokens) => {
+          completedUsage = tokens;
+        },
+      ),
+    );
+    const reader = out.getReader();
+    const decoder = new TextDecoder();
+    // Read until the client would have seen [DONE], then cancel — mimics a
+    // client closing right after the sentinel, before flush() can run.
+    let text = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (text.includes("data: [DONE]")) {
+        await reader.cancel();
+        break;
+      }
+    }
+    // finalizeStream is invoked synchronously in transform() at [DONE]; give
+    // the microtask queue a tick for the async persistence path.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(completedUsage).toEqual(usage);
+  });
+
   it("does not translate a trailing data: [DONE]", async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({

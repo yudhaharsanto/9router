@@ -103,7 +103,7 @@ export function createSSEStream(options = {}) {
   let currentOpenAIResponsesEvent = null;
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
-  let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
+  let streamDoneSent = false; // track duplicate [DONE] across transform + flush
   let finalized = false;
 
   // Usage/logging tail, callable from transform() as well as flush(): a client that
@@ -116,21 +116,42 @@ export function createSSEStream(options = {}) {
     let finalUsage = isPassthrough ? usage : state?.usage;
 
     if (!hasValidUsage(finalUsage) && totalContentLength > 0) {
-      finalUsage = estimateUsage(body, totalContentLength, isPassthrough ? FORMATS.OPENAI : sourceFormat);
-      if (isPassthrough) usage = finalUsage; else state.usage = finalUsage;
+      finalUsage = estimateUsage(
+        body,
+        totalContentLength,
+        isPassthrough ? FORMATS.OPENAI : sourceFormat,
+      );
+      if (isPassthrough) usage = finalUsage;
+      else state.usage = finalUsage;
     }
 
     if (hasValidUsage(finalUsage)) {
-      logUsage(isPassthrough ? provider : (state?.provider || targetFormat), finalUsage, model, connectionId, apiKey);
+      logUsage(
+        isPassthrough ? provider : state?.provider || targetFormat,
+        finalUsage,
+        model,
+        connectionId,
+        apiKey,
+      );
     } else {
-      appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
+      appendRequestLog({
+        model,
+        provider,
+        connectionId,
+        tokens: null,
+        status: "200 OK",
+      }).catch(() => {});
     }
 
     if (onStreamComplete) {
-      onStreamComplete({
-        content: accumulatedContent,
-        thinking: accumulatedThinking
-      }, finalUsage, ttftAt);
+      onStreamComplete(
+        {
+          content: accumulatedContent,
+          thinking: accumulatedThinking,
+        },
+        finalUsage,
+        ttftAt,
+      );
     }
   };
 
@@ -257,7 +278,10 @@ export function createSSEStream(options = {}) {
                 accumulatedThinking += reasoning;
               }
 
-              responsesTerminal = isOpenAIResponsesTerminalEvent(currentOpenAIResponsesEvent, parsed);
+              responsesTerminal = isOpenAIResponsesTerminalEvent(
+                currentOpenAIResponsesEvent,
+                parsed,
+              );
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               // Only estimate when no real usage was accumulated — some gateways
@@ -483,6 +507,21 @@ export function createSSEStream(options = {}) {
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
           if (buffer) {
+            const trimmedBuffer = buffer.trim();
+            if (
+              trimmedBuffer.startsWith("data:") &&
+              trimmedBuffer.slice(5).trim() !== "[DONE]"
+            ) {
+              try {
+                const extracted = extractUsage(
+                  JSON.parse(trimmedBuffer.slice(5).trim()),
+                );
+                if (extracted) usage = mergeUsage(usage, extracted);
+              } catch {
+                /* raw tail is forwarded unchanged below */
+              }
+            }
+
             let output = buffer;
             if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
@@ -519,14 +558,20 @@ export function createSSEStream(options = {}) {
           // which must not be translated. An Ollama chunk also carries done:true,
           // but it is the real final chunk — it holds finish_reason and the token
           // counts — so it has to go through.
-          const isDoneSentinel = parsed?.done && targetFormat !== FORMATS.OLLAMA;
+          const isDoneSentinel =
+            parsed?.done && targetFormat !== FORMATS.OLLAMA;
           if (parsed && !isDoneSentinel) {
             // Same accumulation the transform loop does, so finalizeStream() can
             // log a tail chunk's tokens instead of falling back to null.
             const extracted = extractUsage(parsed);
             if (extracted) state.usage = mergeUsage(state.usage, extracted);
 
-            const translated = translateResponse(targetFormat, sourceFormat, parsed, state);
+            const translated = translateResponse(
+              targetFormat,
+              sourceFormat,
+              parsed,
+              state,
+            );
 
             if (translated?._openaiIntermediate) {
               for (const item of translated._openaiIntermediate) {

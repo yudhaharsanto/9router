@@ -741,6 +741,7 @@ export default function ProviderDetailPage() {
     modelId,
     type = "llm",
     providerAliasOverride = providerStorageAlias,
+    caps,
   ) => {
     try {
       const res = await fetch("/api/models/custom", {
@@ -750,6 +751,7 @@ export default function ProviderDetailPage() {
           providerAlias: providerAliasOverride,
           id: modelId,
           type,
+          ...(caps ? { caps } : {}),
         }),
       });
       if (res.ok) {
@@ -1258,7 +1260,7 @@ export default function ProviderDetailPage() {
     selectedConnectionIds.includes(connectionId);
 
   const connectionsList = (
-    <div className="flex min-w-0 max-h-[500px] flex-col divide-y divide-black/[0.03] overflow-y-auto dark:divide-white/[0.03]">
+    <div className="flex min-w-0 max-h-[500px] flex-col divide-y divide-black/[0.03] overflow-y-auto dark:divide-white/[0.03] pr-1">
       {connections.map((conn, index) => (
         <div key={conn.id} className="flex min-w-0 items-stretch">
           <div className="flex shrink-0 items-center pl-1 sm:pl-2">
@@ -2053,7 +2055,12 @@ export default function ProviderDetailPage() {
                       </Button>
                     )}
                     {providerId === "grok-cli" && (
-                      <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportGrokCli(true)}>
+                      <Button
+                        size="sm"
+                        icon="playlist_add"
+                        variant="secondary"
+                        onClick={() => setShowBulkImportGrokCli(true)}
+                      >
                         {translate("Bulk Add")}
                       </Button>
                     )}
@@ -2159,7 +2166,9 @@ export default function ProviderDetailPage() {
                       icon="playlist_add"
                       variant="secondary"
                       onClick={() => setShowBulkImportGrokCli(true)}
-                      title={translate("Bulk import Grok CLI accounts from JSON")}
+                      title={translate(
+                        "Bulk import Grok CLI accounts from JSON",
+                      )}
                       className="w-full sm:w-auto"
                     >
                       {translate("Bulk Add")}
@@ -2335,8 +2344,13 @@ export default function ProviderDetailPage() {
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
           providerDisplayAlias={providerDisplayAlias}
-          onSave={async (modelId) => {
-            await handleAddCustomModel(modelId, "llm", providerStorageAlias);
+          onSave={async (modelId, caps) => {
+            await handleAddCustomModel(
+              modelId,
+              "llm",
+              providerStorageAlias,
+              caps,
+            );
             setShowAddCustomModel(false);
           }}
           onClose={() => setShowAddCustomModel(false)}

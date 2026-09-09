@@ -1945,6 +1945,13 @@ export default function ProviderDetailPage() {
               >
                 Import
               </Button>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleImportConnections}
+              />
               {connections.length > 0 && (
                 <Button
                   size="sm"

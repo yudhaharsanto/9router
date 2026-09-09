@@ -44,9 +44,15 @@ const autoclaw = {
     if (!proxyResult.success) {
       throw new Error(`Failed to start callback proxy: ${proxyResult.reason}`);
     }
-    const callbackBase = `http://localhost:${proxyResult.port}/auth/callback-`;
-    const navigateUri =
-      authMethod === "zai" ? `${callbackBase}zai` : `${callbackBase}google`;
+    const callbackOrigin = options.callbackOrigin;
+    const callbackBase = callbackOrigin
+      ? `${callbackOrigin}/api/oauth/autoclaw/callback/`
+      : `http://localhost:${proxyResult.port}/auth/callback-`;
+    const navigateUri = callbackOrigin
+      ? `${callbackBase}${authMethod}`
+      : authMethod === "zai"
+        ? `${callbackBase}zai`
+        : `${callbackBase}google`;
 
     const authorizeUrl =
       authMethod === "zai" ? config.zaiAuthorizeUrl : config.authorizeUrl;

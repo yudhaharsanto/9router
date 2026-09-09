@@ -491,6 +491,29 @@ export function getAutoClawSessionStatus(deviceCode) {
   return autoclawSessions.get(deviceCode) || null;
 }
 
+export function handleAutoClawCallback(url) {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const errorParam = url.searchParams.get("error");
+  const session = state ? autoclawSessions.get(state) : null;
+
+  if (!session) return { success: false, error: "OAuth session not found" };
+  if (errorParam) {
+    session.status = "error";
+    session.error = url.searchParams.get("error_description") || errorParam;
+    return { success: false, error: session.error };
+  }
+  if (!code) {
+    session.status = "error";
+    session.error = "No authorization code received";
+    return { success: false, error: session.error };
+  }
+
+  session.status = "exchanging";
+  session.code = code;
+  return { success: true };
+}
+
 export function clearAutoClawSession(deviceCode) {
   autoclawSessions.delete(deviceCode);
 }

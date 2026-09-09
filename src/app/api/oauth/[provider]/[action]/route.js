@@ -237,6 +237,11 @@ export async function GET(request, { params }) {
       const region = searchParams.get("region");
       const authMethod = searchParams.get("auth_method");
       const captchaParam = searchParams.get("captcha_param");
+      const callbackOrigin =
+        process.env.PUBLIC_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.BASE_URL ||
+        `${searchParams.get("callback_protocol") || request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(":", "")}://${searchParams.get("callback_host") || request.headers.get("x-forwarded-host") || request.headers.get("host") || new URL(request.url).host}`;
       const deviceOptions =
         provider === "kiro" || provider === "autoclaw"
           ? {
@@ -244,6 +249,7 @@ export async function GET(request, { params }) {
               ...(region ? { region } : {}),
               ...(authMethod ? { authMethod } : {}),
               ...(captchaParam ? { captchaParam } : {}),
+              ...(provider === "autoclaw" ? { callbackOrigin } : {}),
             }
           : undefined;
 

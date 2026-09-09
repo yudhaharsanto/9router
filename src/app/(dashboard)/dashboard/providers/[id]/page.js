@@ -2064,6 +2064,9 @@ export default function ProviderDetailPage() {
                         {translate("Bulk Add")}
                       </Button>
                     )}
+                    <Button size="sm" icon="add" onClick={triggerAddConnection}>
+                      {isCompatible ? "Add API Key" : "Add"}
+                    </Button>
                     <Button
                       size="sm"
                       icon="upload"

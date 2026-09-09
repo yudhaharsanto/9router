@@ -398,14 +398,14 @@ export class GrokCliExecutor extends BaseExecutor {
   }
 
   parseError(response, bodyText) {
-    // 402 personal-team-blocked:spending-limit → surface as payment/quota for fallback
-    if (response.status === 402 && bodyText) {
+    // 402 personal-team-blocked:spending-limit / 429 free-usage-exhausted
+    if ((response.status === 402 || response.status === 429) && bodyText) {
       try {
         const json = JSON.parse(bodyText);
         const code = json?.code || "";
         const msg = json?.error || json?.message || bodyText;
         return {
-          status: 402,
+          status: response.status,
           message: typeof msg === "string" ? msg : bodyText,
           code: typeof code === "string" ? code : undefined,
         };
@@ -414,6 +414,23 @@ export class GrokCliExecutor extends BaseExecutor {
       }
     }
     return super.parseError(response, bodyText);
+  }
+
+  async computeRetryDelay(response) {
+    if (response.status !== 429) return null;
+    try {
+      const text = await response.clone().text();
+      const lower = String(text || "").toLowerCase();
+      if (
+        lower.includes("free-usage-exhausted") ||
+        lower.includes("used all the included free usage")
+      ) {
+        return false;
+      }
+    } catch {
+      /* keep default 429 retry */
+    }
+    return null;
   }
 
   transformRequest(model, body, stream, credentials) {

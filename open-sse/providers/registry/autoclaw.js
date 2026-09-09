@@ -12,9 +12,9 @@ export default {
     icon: "autoclaw",
     color: "#FF6B35",
     textIcon: "AC",
-    website: "https://autoclaw.com",
+    website: "https://autoclaw.z.ai/web/",
     notice: {
-      signupUrl: "https://autoclaw.com",
+      signupUrl: "https://autoclaw.z.ai/web/",
     },
   },
   category: "oauth",
@@ -29,6 +29,11 @@ export default {
     // DeepSeek-backed labels 500 on stream:false — always stream upstream, re-aggregate
     // for non-streaming clients (handled by executor + chatCore).
     forceStream: true,
+    // AutoClaw load balancing can return stale 400 nodes or temporary 403 capacity errors.
+    retry: {
+      400: { attempts: 4, delayMs: 700 },
+      403: { attempts: 3, delayMs: 1200 },
+    },
     // Auth uses X-Authorization (not the standard Authorization header) — handled by executor.
     auth: {
       combined: true,
@@ -43,32 +48,33 @@ export default {
       url: "https://autoglm-api.autoglm.ai/agent-assetmgr/api/v2/wallets?biz_app_id=autoclaw",
     },
   },
-  // Verified model substitution table (label ≠ served model). Only the working
-  // labels are exposed; dead labels (zai_glm-4.x, zai_glm-5, zai_glm-5.2,
-  // huawei_glm-5) are omitted — they 400/404 for this account class.
+  // Models exposed by current AutoClaw 1.18.1 catalog.
   models: [
     {
-      id: "openrouter_glm-5.2",
-      name: "GLM-5.2 (OpenRouter)",
-      upstreamModelId: "openrouter_glm-5.2",
+      id: "zai_glm-5.3-flash",
+      name: "GLM-5.3 Flash",
+      upstreamModelId: "zai_glm-5.3-flash",
+    },
+    {
+      id: "zaicoding_glm-5.3",
+      name: "GLM-5.3",
+      upstreamModelId: "zaicoding_glm-5.3",
+    },
+    {
+      id: "tdpsk_deepseek-v4-flash-202605",
+      name: "DeepSeek V4 Flash",
+      upstreamModelId: "tdpsk_deepseek-v4-flash-202605",
+    },
+    {
+      id: "tdpsk_deepseek-v4-pro-202606",
+      name: "DeepSeek V4 Pro",
+      upstreamModelId: "tdpsk_deepseek-v4-pro-202606",
     },
     {
       id: "zai_glm-5-turbo",
       name: "GLM-5 Turbo",
       upstreamModelId: "zai_glm-5-turbo",
     },
-    {
-      id: "zai_glm-5v-turbo",
-      name: "GLM-5V Turbo",
-      upstreamModelId: "zai_glm-5v-turbo",
-    },
-    { id: "zai_glm-5.1", name: "GLM-5.1", upstreamModelId: "zai_glm-5.1" },
-    {
-      id: "zai_pony-alpha-2",
-      name: "Pony Alpha 2",
-      upstreamModelId: "zai_pony-alpha-2",
-    },
-    { id: "zai_auto", name: "Auto (DeepSeek)", upstreamModelId: "zai_auto" },
   ],
   oauth: {
     // AutoClaw app signing credentials (baked into the desktop client, forgeable).
@@ -83,6 +89,10 @@ export default {
       "https://autoglm-api.autoglm.ai/userapi/overseasv1/google-oauth-url",
     tokenUrl:
       "https://autoglm-api.autoglm.ai/userapi/overseasv1/google-oauth-login",
+    zaiAuthorizeUrl:
+      "https://autoglm-api.autoglm.ai/userapi/overseasv1/zai-oauth-url",
+    zaiTokenUrl:
+      "https://autoglm-api.autoglm.ai/userapi/overseasv1/zai-oauth-login",
     refreshUrl: "https://autoglm-api.autoglm.ai/userapi/v1/refresh",
     refresh: { encoding: "json" },
     userInfoUrl: "https://autoglm-api.autoglm.ai/userapi/v1/user-profile",

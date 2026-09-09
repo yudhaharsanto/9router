@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import http from "http";
 import { URL } from "url";
-import open from "open";
 import { AUTOCLOW_CONFIG } from "../constants/oauth.js";
 import { getServerCredentials } from "../config/index.js";
 import { spinner as createSpinner } from "../utils/ui.js";
@@ -112,13 +111,20 @@ export class AutoClawService {
    * Step 1: request the Google OAuth URL from AutoClaw.
    * Returns { oauth_url, state }.
    */
-  async requestOAuthUrl(deviceId) {
+  async requestOAuthUrl(deviceId, authMethod = "google") {
     const body = JSON.stringify({
       source_id: this.config.sourceId,
       device_id: deviceId,
-      navigate_uri: this.config.redirectUri,
+      navigate_uri:
+        authMethod === "zai" && this.config.zaiRedirectUri
+          ? this.config.zaiRedirectUri
+          : this.config.redirectUri,
     });
-    const response = await fetch(this.config.authorizeUrl, {
+    const authorizeUrl =
+      authMethod === "zai"
+        ? this.config.zaiAuthorizeUrl
+        : this.config.authorizeUrl;
+    const response = await fetch(authorizeUrl, {
       method: "POST",
       headers: this.appHeaders(),
       body,
@@ -144,10 +150,10 @@ export class AutoClawService {
   }
 
   /**
-   * Step 2: exchange the Google callback code for AutoClaw tokens.
+   * Step 2: exchange the Google or Z.ai callback code for AutoClaw tokens.
    * Returns { access_token, refresh_token, user_id, user_name, first_login }.
    */
-  async exchangeCode(code, state, deviceId) {
+  async exchangeCode(code, state, deviceId, authMethod = "google") {
     const body = JSON.stringify({
       source_id: this.config.sourceId,
       device_id: deviceId,
@@ -155,7 +161,9 @@ export class AutoClawService {
       state,
       navigate_uri: this.config.redirectUri,
     });
-    const response = await fetch(this.config.tokenUrl, {
+    const tokenUrl =
+      authMethod === "zai" ? this.config.zaiTokenUrl : this.config.tokenUrl;
+    const response = await fetch(tokenUrl, {
       method: "POST",
       headers: this.appHeaders(),
       body,
@@ -211,9 +219,10 @@ export class AutoClawService {
   }
 
   /**
-   * Complete AutoClaw Google OAuth flow.
+   * Complete AutoClaw Google or Z.ai OAuth flow.
    */
-  async connect() {
+  async connect(authMethod = "google") {
+    authMethod = authMethod === "zai" ? "zai" : "google";
     const spinner = createSpinner("Starting AutoClaw OAuth...").start();
 
     try {
@@ -222,11 +231,13 @@ export class AutoClawService {
 
       spinner.text = "Requesting AutoClaw OAuth URL...";
 
-      // Step 1: get the Google consent URL + state from AutoClaw.
-      const { oauthUrl } = await this.requestOAuthUrl(deviceId);
+      // Step 1: get the consent URL + state from AutoClaw.
+      const { oauthUrl } = await this.requestOAuthUrl(deviceId, authMethod);
 
       spinner.succeed("AutoClaw OAuth URL obtained");
-      console.log("\nOpening browser for AutoClaw (Google) authentication...");
+      console.log(
+        `\nOpening browser for AutoClaw (${authMethod === "zai" ? "Z.ai" : "Google"}) authentication...`,
+      );
       console.log(`If browser doesn't open, visit:\n${oauthUrl}\n`);
 
       // Start local callback server on the fixed port 18432.
@@ -263,11 +274,12 @@ export class AutoClawService {
 
       spinner.start("Exchanging code for AutoClaw tokens...");
 
-      // Step 2: exchange the Google code for AutoClaw tokens.
+      // Step 2: exchange the callback code for AutoClaw tokens.
       const data = await this.exchangeCode(
         callbackParams.code,
         callbackParams.state,
         deviceId,
+        authMethod,
       );
 
       // Normalize: strip "Bearer " prefix if present.

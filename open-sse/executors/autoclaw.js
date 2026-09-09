@@ -34,6 +34,13 @@ export class AutoClawExecutor extends DefaultExecutor {
     );
     // Upstream MUST be stream (DeepSeek-backed labels 500 on stream:false).
     transformed.stream = true;
+    // Desktop strips the platform prefix from body.model (trace: model.id
+    // "zai_auto" → body.model "auto", "dpskpro_deepseek-v4-flash" →
+    // "deepseek-v4-flash"). X-Request-Model keeps the full id.
+    if (typeof transformed.model === "string") {
+      const idx = transformed.model.indexOf("_");
+      if (idx > 0) transformed.model = transformed.model.slice(idx + 1);
+    }
     return transformed;
   }
 
@@ -49,8 +56,19 @@ export class AutoClawExecutor extends DefaultExecutor {
       headers["X-Authorization"] = `Bearer ${token}`;
     }
 
-    // X-Request-Id: fresh per request.
+    // Match AutoClaw 1.18.1 desktop headers.
+    headers["X-Tm"] = "mac";
+    headers["X-Version"] = "1.18.1";
+    headers["X-Product"] = "autoclaw";
+    headers["X-Channel"] = "official";
+    headers["X-Lang"] = "en";
+    headers["X-Client-Type"] = "pc";
     headers["X-Request-Id"] = randomUUID();
+    // These session headers are sent by the AutoClaw desktop gateway and are
+    // required by some proxy nodes even for a normal chat completion.
+    headers["X-Session-Id"] = this._currentSessionId || randomUUID();
+    headers["X-Agent-Id"] = "main";
+    headers["X-Session-Key"] = "agent:main:main";
 
     // X-Request-Model: the upstream model selector (body "model" is ignored).
     // Stashed by execute() before super.execute() calls buildHeaders.
@@ -108,8 +126,8 @@ export class AutoClawExecutor extends DefaultExecutor {
             "X-Auth-TimeStamp": ts,
             "X-Auth-Sign": sign,
             "X-Product": "autoclaw",
-            "X-Version": "1.11.0",
-            "X-Tm": "win",
+            "X-Version": "1.18.1",
+            "X-Tm": "mac",
             "X-Trace-Id": randomUUID(),
             "Content-Type": "application/json",
           },

@@ -6,7 +6,9 @@ import { getVideoAdapter } from "./videoProviders/index.js";
 
 // Upstream fetch deadline for video job submission/polling (the job itself is
 // async upstream — this only bounds the HTTP round-trip, not video rendering).
-const VIDEO_FETCH_TIMEOUT_MS = Number(process.env.VIDEO_FETCH_TIMEOUT_MS || 120000);
+const VIDEO_FETCH_TIMEOUT_MS = Number(
+  process.env.VIDEO_FETCH_TIMEOUT_MS || 120000,
+);
 
 // POST /videos/* creates a billable upstream job. A network error after the
 // request left the socket may still have created the job, so creation is NEVER
@@ -21,7 +23,10 @@ export function getVideoConfig(provider) {
 /** Strip bearer tokens / obvious secrets from text destined for clients or logs. */
 export function sanitizeSecrets(text, credentials = null) {
   if (!text) return text;
-  let out = String(text).replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]");
+  let out = String(text).replace(
+    /Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+    "Bearer [redacted]",
+  );
   for (const key of ["accessToken", "refreshToken", "apiKey"]) {
     const secret = credentials?.[key];
     if (typeof secret === "string" && secret.length >= 8) {
@@ -31,9 +36,12 @@ export function sanitizeSecrets(text, credentials = null) {
   return out;
 }
 
-function buildUpstreamUrl(config, action, requestId) {
+function buildUpstreamUrl(config, action, requestId, suffix) {
   const base = config.baseUrl.replace(/\/$/, "");
-  return requestId ? `${base}/${encodeURIComponent(requestId)}` : `${base}/${action}`;
+  if (!requestId) return `${base}/${action}`;
+  const job = `${base}/${encodeURIComponent(requestId)}`;
+  // e.g. the mp4 bytes at /v1/videos/{id}/content
+  return suffix ? `${job}/${encodeURIComponent(suffix)}` : job;
 }
 
 function buildHeaders({ token, contentType, idempotencyKey }) {
@@ -45,7 +53,10 @@ function buildHeaders({ token, contentType, idempotencyKey }) {
 }
 
 function combineSignals(signal, timeoutMs) {
-  const timeoutSignal = typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(timeoutMs) : null;
+  const timeoutSignal =
+    typeof AbortSignal?.timeout === "function"
+      ? AbortSignal.timeout(timeoutMs)
+      : null;
   if (signal && timeoutSignal && typeof AbortSignal.any === "function") {
     return AbortSignal.any([signal, timeoutSignal]);
   }
@@ -64,6 +75,7 @@ function combineSignals(signal, timeoutMs) {
  * @param {string} options.provider - Provider id (must have registry videoConfig)
  * @param {"generations"|"edits"|"extensions"|null} options.action - Creation action (POST)
  * @param {string|null} [options.requestId] - Poll target (GET /videos/{id})
+ * @param {string|null} [options.suffix] - Sub-path after the job id (e.g. "content" for the mp4 bytes)
  * @param {Buffer|string|null} [options.rawBody] - Exact body to forward
  * @param {string|null} [options.contentType] - Original Content-Type header
  * @param {string|null} [options.idempotencyKey] - Forwarded Idempotency-Key
@@ -78,6 +90,7 @@ export async function handleVideoProxyCore({
   provider,
   action = null,
   requestId = null,
+  suffix = null,
   rawBody = null,
   contentType = null,
   idempotencyKey = null,
@@ -89,10 +102,16 @@ export async function handleVideoProxyCore({
 }) {
   const config = getVideoConfig(provider);
   if (!config) {
-    return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support video generation`);
+    return createErrorResult(
+      HTTP_STATUS.BAD_REQUEST,
+      `Provider '${provider}' does not support video generation`,
+    );
   }
   if (!requestId && !VIDEO_ACTIONS.has(action)) {
-    return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Unknown video action: ${action}`);
+    return createErrorResult(
+      HTTP_STATUS.BAD_REQUEST,
+      `Unknown video action: ${action}`,
+    );
   }
 
   const adapter = getVideoAdapter(provider);
@@ -103,7 +122,7 @@ export async function handleVideoProxyCore({
     const method = requestId ? "GET" : "POST";
     return {
       method,
-      url: buildUpstreamUrl(config, action, requestId),
+      url: buildUpstreamUrl(config, action, requestId, suffix),
       headers: buildHeaders({
         token: credentials?.accessToken || credentials?.apiKey,
         contentType: method === "POST" ? contentType : null,
@@ -117,7 +136,15 @@ export async function handleVideoProxyCore({
   const doFetch = async () => {
     const plan = adapter
       ? await adapter.buildRequest({
-          config, action, requestId, rawBody, contentType, idempotencyKey, credentials, log,
+          config,
+          action,
+          requestId,
+          suffix,
+          rawBody,
+          contentType,
+          idempotencyKey,
+          credentials,
+          log,
           token: credentials?.accessToken || credentials?.apiKey,
         })
       : defaultPlan();
@@ -136,60 +163,107 @@ export async function handleVideoProxyCore({
   let upstream;
   try {
     const first = await doFetch();
-    if (first.planError) return createErrorResult(HTTP_STATUS.BAD_REQUEST, `[${provider}] ${first.planError}`);
+    if (first.planError)
+      return createErrorResult(
+        HTTP_STATUS.BAD_REQUEST,
+        `[${provider}] ${first.planError}`,
+      );
     upstream = first.response;
   } catch (error) {
     if (error?.name === "AbortError" || error?.name === "TimeoutError") {
-      return createErrorResult(HTTP_STATUS.REQUEST_TIMEOUT, `[${provider}] video ${method} aborted: ${error.message}`);
+      return createErrorResult(
+        HTTP_STATUS.REQUEST_TIMEOUT,
+        `[${provider}] video ${method} aborted: ${error.message}`,
+      );
     }
     // Never re-send a creation POST on network error — the job may already exist upstream.
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video upstream fetch failed: ${error.message}`, credentials));
+    return createErrorResult(
+      HTTP_STATUS.BAD_GATEWAY,
+      sanitizeSecrets(
+        `[${provider}] video upstream fetch failed: ${error.message}`,
+        credentials,
+      ),
+    );
   }
 
   // 401/403 → refresh once → retry once (OAuth accounts only; API keys can't refresh)
   if (
-    (upstream.status === HTTP_STATUS.UNAUTHORIZED || upstream.status === HTTP_STATUS.FORBIDDEN) &&
+    (upstream.status === HTTP_STATUS.UNAUTHORIZED ||
+      upstream.status === HTTP_STATUS.FORBIDDEN) &&
     credentials?.refreshToken
   ) {
     let refreshed = null;
     try {
       refreshed = await refreshTokenByProvider(provider, credentials, log);
     } catch (error) {
-      log?.warn?.("TOKEN", `${provider} | video refresh error: ${sanitizeSecrets(error.message, credentials)}`);
+      log?.warn?.(
+        "TOKEN",
+        `${provider} | video refresh error: ${sanitizeSecrets(error.message, credentials)}`,
+      );
     }
     if (refreshed?.accessToken) {
-      log?.info?.("TOKEN", `${provider.toUpperCase()} | refreshed for video ${method}`);
+      log?.info?.(
+        "TOKEN",
+        `${provider.toUpperCase()} | refreshed for video ${method}`,
+      );
       Object.assign(credentials, refreshed);
       if (onCredentialsRefreshed) await onCredentialsRefreshed(refreshed);
       try {
         await upstream.body?.cancel?.();
-      } catch { /* noop */ }
+      } catch {
+        /* noop */
+      }
       try {
         const retry = await doFetch();
-        if (retry.planError) return createErrorResult(HTTP_STATUS.BAD_REQUEST, `[${provider}] ${retry.planError}`);
+        if (retry.planError)
+          return createErrorResult(
+            HTTP_STATUS.BAD_REQUEST,
+            `[${provider}] ${retry.planError}`,
+          );
         upstream = retry.response;
       } catch (error) {
-        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video retry after refresh failed: ${error.message}`, credentials));
+        return createErrorResult(
+          HTTP_STATUS.BAD_GATEWAY,
+          sanitizeSecrets(
+            `[${provider}] video retry after refresh failed: ${error.message}`,
+            credentials,
+          ),
+        );
       }
     } else {
-      log?.warn?.("TOKEN", `${provider.toUpperCase()} | video refresh failed — account needs re-auth`);
+      log?.warn?.(
+        "TOKEN",
+        `${provider.toUpperCase()} | video refresh failed — account needs re-auth`,
+      );
     }
   }
 
-  const bodyText = await upstream.text().catch(() => "");
+  // Read as bytes: a job poll is JSON, but the {id}/content download is video/mp4
+  // and would be mangled by a UTF-8 text() decode.
+  const bodyBytes = Buffer.from(
+    await upstream.arrayBuffer().catch(() => new ArrayBuffer(0)),
+  );
 
   if (!upstream.ok) {
-    const message = sanitizeSecrets(bodyText || `HTTP ${upstream.status}`, credentials);
-    return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`);
+    const message = sanitizeSecrets(
+      bodyBytes.toString("utf8") || `HTTP ${upstream.status}`,
+      credentials,
+    );
+    return createErrorResult(
+      upstream.status,
+      `[${provider}] ${message.slice(0, 2000)}`,
+    );
   }
 
-  // Success: pass the upstream JSON through untouched (request_id / status / video.url),
+  // Success: pass the upstream body through untouched (request_id / status / video.url),
   // unless the adapter maps a provider-native shape onto it (Vertex operations).
-  let outBody = bodyText;
+  let outBody = bodyBytes;
   let outType = upstream.headers.get("content-type") || "application/json";
   if (adapter?.transformResponse) {
     try {
-      outBody = JSON.stringify(adapter.transformResponse(JSON.parse(bodyText)));
+      outBody = JSON.stringify(
+        adapter.transformResponse(JSON.parse(bodyBytes.toString("utf8"))),
+      );
       outType = "application/json";
     } catch {
       // Non-JSON or unexpected shape — fall back to the raw upstream body.

@@ -47,5 +47,26 @@ export default {
   // Catalog is dynamic (prefix/model ids, aliases, combo/..., free/...) — fetch
   // suggested models and accept any model id.
   modelsFetcher: { url: "https://api.inferhub.dev/v1/models", type: "openai" },
+  // Passthrough catalog — media ids below are the documented examples; any
+  // model with image/video output_modality works via "inferhub/<prefix>/<id>".
+  models: [
+    { id: "leo/phoenix-v1.0", name: "Leonardo Phoenix 1.0", kind: "image" },
+    { id: "gpt-image-2", name: "GPT Image 2", kind: "image" },
+    {
+      id: "leo/veo-3.1-fast-generate-001",
+      name: "Veo 3.1 Fast (Leonardo)",
+      kind: "video",
+    },
+  ],
+  serviceKinds: ["llm", "image", "video"],
+  // [OI]-compatible images; images come back inline as b64_json (no hosted URL).
+  // Docs: https://inferhub.dev/docs/api/reference#tag/inference
+  imageConfig: {
+    baseUrl: "https://api.inferhub.dev/v1/images/generations",
+    bodyFields: ["model", "prompt", "n", "size", "quality", "response_format"],
+  },
+  // Async video jobs: POST /v1/videos → { id, status }, GET /v1/videos/{id} polls,
+  // bytes at GET /v1/videos/{id}/content.
+  videoConfig: { baseUrl: "https://api.inferhub.dev/v1/videos" },
   passthroughModels: true,
 };

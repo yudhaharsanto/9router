@@ -13,16 +13,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("open-sse/services/tokenRefresh.js", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, refreshTokenByProvider: vi.fn(), refreshVertexToken: vi.fn() };
+  return {
+    ...actual,
+    refreshTokenByProvider: vi.fn(),
+    refreshVertexToken: vi.fn(),
+  };
 });
 
-import { handleVideoProxyCore, getVideoConfig } from "open-sse/handlers/videoCore.js";
+import {
+  handleVideoProxyCore,
+  getVideoConfig,
+} from "open-sse/handlers/videoCore.js";
 import { refreshVertexToken } from "open-sse/services/tokenRefresh.js";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "open-sse/providers/index.js";
 
 const originalFetch = global.fetch;
 const jsonResponse = (body, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 
 // Vertex operation names are resource paths; the adapter base64url-encodes them.
 const OPERATION_NAME =
@@ -31,26 +41,40 @@ const JOB_ID = Buffer.from(OPERATION_NAME, "utf8").toString("base64url");
 
 describe("registry wiring", () => {
   it("exposes videoConfig + video serviceKind for openrouter and vertex", () => {
-    expect(getVideoConfig("openrouter").baseUrl).toBe("https://openrouter.ai/api/v1/videos");
-    expect(getVideoConfig("vertex").baseUrl).toBe("https://aiplatform.googleapis.com");
+    expect(getVideoConfig("openrouter").baseUrl).toBe(
+      "https://openrouter.ai/api/v1/videos",
+    );
+    expect(getVideoConfig("vertex").baseUrl).toBe(
+      "https://aiplatform.googleapis.com",
+    );
     expect(PROVIDER_MEDIA.openrouter.serviceKinds).toContain("video");
     expect(PROVIDER_MEDIA.vertex.serviceKinds).toContain("video");
   });
 
   it("registers video-kind models on both providers", () => {
-    const or = PROVIDER_MODELS.openrouter.find((m) => m.id === "google/veo-3.1");
-    const vx = PROVIDER_MODELS.vertex.find((m) => m.id === "veo-3.1-generate-preview");
+    const or = PROVIDER_MODELS.openrouter.find(
+      (m) => m.id === "google/veo-3.1",
+    );
+    const vx = PROVIDER_MODELS.vertex.find(
+      (m) => m.id === "veo-3.1-generate-preview",
+    );
     expect(or?.kind).toBe("video");
     expect(vx?.kind).toBe("video");
   });
 });
 
 describe("openrouter video adapter", () => {
-  beforeEach(() => { global.fetch = vi.fn(); });
-  afterEach(() => { global.fetch = originalFetch; });
+  beforeEach(() => {
+    global.fetch = vi.fn();
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
 
   it("POSTs creation to the collection root (no /generations suffix)", async () => {
-    global.fetch.mockResolvedValueOnce(jsonResponse({ id: "job-1", status: "pending" }));
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({ id: "job-1", status: "pending" }),
+    );
 
     const raw = '{"model":"google/veo-3.1","prompt":"a paper boat"}';
     const result = await handleVideoProxyCore({
@@ -68,11 +92,18 @@ describe("openrouter video adapter", () => {
     expect(init.body).toBe(raw); // verbatim
     expect(init.headers.Authorization).toBe("Bearer sk-or-key");
     expect(init.headers["HTTP-Referer"]).toBe("https://endpoint-proxy.local");
-    expect(await result.response.json()).toEqual({ id: "job-1", status: "pending" });
+    expect(await result.response.json()).toEqual({
+      id: "job-1",
+      status: "pending",
+    });
   });
 
   it("polls GET /videos/{id} and passes the payload through verbatim", async () => {
-    const payload = { id: "job-1", status: "completed", unsigned_urls: ["https://cdn/v.mp4"] };
+    const payload = {
+      id: "job-1",
+      status: "completed",
+      unsigned_urls: ["https://cdn/v.mp4"],
+    };
     global.fetch.mockResolvedValueOnce(jsonResponse(payload));
 
     const result = await handleVideoProxyCore({
@@ -102,12 +133,92 @@ describe("openrouter video adapter", () => {
   });
 });
 
+describe("inferhub video adapter", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn();
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("POSTs creation to /v1/videos and polls /v1/videos/{id}", async () => {
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({ id: "job-1", object: "video", status: "queued" }),
+    );
+
+    const raw =
+      '{"model":"leo/veo-3.1-fast-generate-001","prompt":"a paper boat"}';
+    const created = await handleVideoProxyCore({
+      provider: "inferhub",
+      action: "generations",
+      rawBody: raw,
+      contentType: "application/json",
+      credentials: { apiKey: "sk-airo-key" },
+    });
+
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      "https://api.inferhub.dev/v1/videos",
+    );
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe(
+      "Bearer sk-airo-key",
+    );
+    expect(await created.response.json()).toEqual({
+      id: "job-1",
+      object: "video",
+      status: "queued",
+    });
+
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({ id: "job-1", status: "completed" }),
+    );
+    const polled = await handleVideoProxyCore({
+      provider: "inferhub",
+      requestId: "job-1",
+      credentials: { apiKey: "sk-airo-key" },
+    });
+    expect(global.fetch.mock.calls[1][0]).toBe(
+      "https://api.inferhub.dev/v1/videos/job-1",
+    );
+    expect(await polled.response.json()).toEqual({
+      id: "job-1",
+      status: "completed",
+    });
+  });
+
+  it("downloads the finished bytes from /v1/videos/{id}/content without mangling them", async () => {
+    const mp4 = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0xff, 0xfe, 0x80,
+    ]);
+    global.fetch.mockResolvedValueOnce(
+      new Response(mp4, {
+        status: 200,
+        headers: { "Content-Type": "video/mp4" },
+      }),
+    );
+
+    const result = await handleVideoProxyCore({
+      provider: "inferhub",
+      requestId: "job-1",
+      suffix: "content",
+      credentials: { apiKey: "sk-airo-key" },
+    });
+
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      "https://api.inferhub.dev/v1/videos/job-1/content",
+    );
+    expect(result.response.headers.get("Content-Type")).toBe("video/mp4");
+    expect(Buffer.from(await result.response.arrayBuffer())).toEqual(mp4);
+  });
+});
+
 describe("vertex (veo) video adapter", () => {
   beforeEach(() => {
     global.fetch = vi.fn();
     refreshVertexToken.mockReset();
   });
-  afterEach(() => { global.fetch = originalFetch; });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
 
   const saJson = JSON.stringify({
     type: "service_account",
@@ -138,12 +249,17 @@ describe("vertex (veo) video adapter", () => {
     expect(result.success).toBe(true);
     const [url, init] = global.fetch.mock.calls[0];
     expect(url).toBe(
-      "https://aiplatform.googleapis.com/v1/projects/proj-1/locations/us-central1/publishers/google/models/veo-3.1-generate-preview:predictLongRunning"
+      "https://aiplatform.googleapis.com/v1/projects/proj-1/locations/us-central1/publishers/google/models/veo-3.1-generate-preview:predictLongRunning",
     );
     expect(init.headers.Authorization).toBe("Bearer vertex-tok");
     expect(JSON.parse(init.body)).toEqual({
       instances: [{ prompt: "a neon city" }],
-      parameters: { sampleCount: 1, durationSeconds: 8, aspectRatio: "16:9", resolution: "720p" },
+      parameters: {
+        sampleCount: 1,
+        durationSeconds: 8,
+        aspectRatio: "16:9",
+        resolution: "720p",
+      },
     });
 
     // Response is mapped onto the async-job shape clients already poll.
@@ -170,7 +286,9 @@ describe("vertex (veo) video adapter", () => {
       credentials: { apiKey: saJson },
     });
 
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body).instances[0].image).toEqual({
+    expect(
+      JSON.parse(global.fetch.mock.calls[0][1].body).instances[0].image,
+    ).toEqual({
       bytesBase64Encoded: "AAAB",
       mimeType: "image/png",
     });
@@ -182,8 +300,10 @@ describe("vertex (veo) video adapter", () => {
       jsonResponse({
         name: OPERATION_NAME,
         done: true,
-        response: { videos: [{ gcsUri: "gs://bucket/v.mp4", mimeType: "video/mp4" }] },
-      })
+        response: {
+          videos: [{ gcsUri: "gs://bucket/v.mp4", mimeType: "video/mp4" }],
+        },
+      }),
     );
 
     const result = await handleVideoProxyCore({
@@ -194,7 +314,7 @@ describe("vertex (veo) video adapter", () => {
 
     const [url, init] = global.fetch.mock.calls[0];
     expect(url).toBe(
-      "https://aiplatform.googleapis.com/v1/projects/proj-1/locations/us-central1/publishers/google/models/veo-3.1-generate-preview:fetchPredictOperation"
+      "https://aiplatform.googleapis.com/v1/projects/proj-1/locations/us-central1/publishers/google/models/veo-3.1-generate-preview:fetchPredictOperation",
     );
     expect(init.method).toBe("POST"); // Vertex polls with POST, not GET
     expect(JSON.parse(init.body)).toEqual({ operationName: OPERATION_NAME });
@@ -203,15 +323,25 @@ describe("vertex (veo) video adapter", () => {
       id: JOB_ID,
       request_id: JOB_ID,
       status: "completed",
-      video: { url: "gs://bucket/v.mp4", b64_json: null, mime_type: "video/mp4" },
-      videos: [{ url: "gs://bucket/v.mp4", b64_json: null, mime_type: "video/mp4" }],
+      video: {
+        url: "gs://bucket/v.mp4",
+        b64_json: null,
+        mime_type: "video/mp4",
+      },
+      videos: [
+        { url: "gs://bucket/v.mp4", b64_json: null, mime_type: "video/mp4" },
+      ],
     });
   });
 
   it("maps a failed operation to status failed", async () => {
     refreshVertexToken.mockResolvedValueOnce({ accessToken: "vertex-tok" });
     global.fetch.mockResolvedValueOnce(
-      jsonResponse({ name: OPERATION_NAME, done: true, error: { code: 3, message: "bad prompt" } })
+      jsonResponse({
+        name: OPERATION_NAME,
+        done: true,
+        error: { code: 3, message: "bad prompt" },
+      }),
     );
 
     const result = await handleVideoProxyCore({
@@ -229,7 +359,10 @@ describe("vertex (veo) video adapter", () => {
     const noProject = await handleVideoProxyCore({
       provider: "vertex",
       action: "generations",
-      rawBody: JSON.stringify({ model: "veo-3.1-generate-preview", prompt: "x" }),
+      rawBody: JSON.stringify({
+        model: "veo-3.1-generate-preview",
+        prompt: "x",
+      }),
       contentType: "application/json",
       credentials: { apiKey: "AIzaRawKey" },
     });
@@ -239,9 +372,15 @@ describe("vertex (veo) video adapter", () => {
     const noToken = await handleVideoProxyCore({
       provider: "vertex",
       action: "generations",
-      rawBody: JSON.stringify({ model: "veo-3.1-generate-preview", prompt: "x" }),
+      rawBody: JSON.stringify({
+        model: "veo-3.1-generate-preview",
+        prompt: "x",
+      }),
       contentType: "application/json",
-      credentials: { apiKey: "AIzaRawKey", providerSpecificData: { projectId: "proj-1" } },
+      credentials: {
+        apiKey: "AIzaRawKey",
+        providerSpecificData: { projectId: "proj-1" },
+      },
     });
     expect(noToken.success).toBe(false);
     expect(noToken.status).toBe(400);
@@ -269,13 +408,19 @@ describe("vertex (veo) video adapter", () => {
 
     for (const id of [
       jid("../../evil"),
-      jid("projects/p/locations/l/publishers/google/models/m/operations/../../x"),
+      jid(
+        "projects/p/locations/l/publishers/google/models/m/operations/../../x",
+      ),
       jid("../../evil/operations/op"),
       "!!!not-base64!!!",
       `${JOB_ID}=`,
       `${JOB_ID}\n`,
     ]) {
-      const result = await handleVideoProxyCore({ provider: "vertex", requestId: id, credentials: { apiKey: saJson } });
+      const result = await handleVideoProxyCore({
+        provider: "vertex",
+        requestId: id,
+        credentials: { apiKey: saJson },
+      });
       expect(result.status).toBe(400);
       expect(global.fetch).not.toHaveBeenCalled();
     }

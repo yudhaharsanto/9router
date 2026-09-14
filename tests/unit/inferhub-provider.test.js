@@ -31,6 +31,25 @@ describe("InferHub provider", () => {
     });
   });
 
+  it("routes image generation to the [OI]-compatible endpoint", () => {
+    expect(inferhub.serviceKinds).toEqual(["llm", "image", "video"]);
+    expect(inferhub.imageConfig).toEqual({
+      baseUrl: "https://api.inferhub.dev/v1/images/generations",
+      bodyFields: ["model", "prompt", "n", "size", "quality", "response_format"],
+    });
+  });
+
+  it("routes video generation to the async jobs endpoint", () => {
+    expect(inferhub.videoConfig).toEqual({ baseUrl: "https://api.inferhub.dev/v1/videos" });
+  });
+
+  it("registers image- and video-kind models for the media selectors", () => {
+    const kinds = Object.fromEntries(inferhub.models.map((m) => [m.id, m.kind]));
+    expect(kinds["leo/phoenix-v1.0"]).toBe("image");
+    expect(kinds["gpt-image-2"]).toBe("image");
+    expect(kinds["leo/veo-3.1-fast-generate-001"]).toBe("video");
+  });
+
   it("builds into the runtime PROVIDERS map with the openai format default", () => {
     expect(PROVIDERS.inferhub).toBeDefined();
     expect(PROVIDERS.inferhub.format).toBe("openai");

@@ -295,6 +295,34 @@ describe("handleImageGenerationCore", () => {
     );
   });
 
+  it("handles InferHub image generation (b64_json only, no style field)", async () => {
+    global.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ created: 1234567890, data: [{ b64_json: "AAAA" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const result = await handleImageGenerationCore({
+      body: { prompt: "A lighthouse at dusk", n: 1, size: "1024x1024", style: "vivid" },
+      modelInfo: { provider: "inferhub", model: "leo/phoenix-v1.0" },
+      credentials: { apiKey: "sk-airo-key" },
+      log: null,
+    });
+
+    expect(result.success).toBe(true);
+    const [url, init] = global.fetch.mock.calls[0];
+    expect(url).toBe("https://api.inferhub.dev/v1/images/generations");
+    expect(init.headers.Authorization).toBe("Bearer sk-airo-key");
+    // bodyFields whitelist drops `style`; InferHub returns inline b64_json.
+    expect(JSON.parse(init.body)).toEqual({
+      model: "leo/phoenix-v1.0",
+      prompt: "A lighthouse at dusk",
+      n: 1,
+      size: "1024x1024",
+    });
+  });
+
   it("handles HuggingFace binary response", async () => {
     const imageBuffer = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
     global.fetch.mockResolvedValueOnce(

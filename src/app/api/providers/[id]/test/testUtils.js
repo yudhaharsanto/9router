@@ -13,6 +13,7 @@ import {
   resolveOllamaLocalHost,
   PROVIDERS,
 } from "open-sse/config/providers.js";
+import { CODEX_CLI_VERSION } from "open-sse/config/appConstants.js";
 import {
   refreshProviderCredentials,
   shouldRefreshCredentials,
@@ -39,7 +40,7 @@ const OAUTH_TEST_CONFIG = {
     extraHeaders: {
       "Content-Type": "application/json",
       originator: "codex_cli_rs",
-      "User-Agent": "codex_cli_rs/0.136.0",
+      "User-Agent": `codex_cli_rs/${CODEX_CLI_VERSION}`,
     },
     // Minimal invalid body — triggers fast 400 without consuming quota
     body: JSON.stringify({
@@ -604,7 +605,11 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
   }
 }
 
-async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null) {
+async function fetchWithConnectionProxy(
+  url,
+  options = {},
+  effectiveProxy = null,
+) {
   // Add a 15-second timeout to prevent connection testing from hanging indefinitely
   // and exhausting the browser/Node.js connection pools.
   if (!options.signal) {

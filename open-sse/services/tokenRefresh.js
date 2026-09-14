@@ -17,6 +17,7 @@ import {
   refreshTraeToken,
   refreshZedToken,
   refreshWindsurfToken,
+  refreshAutoClawToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -150,6 +151,8 @@ const REFRESH_HANDLERS = {
   codebuddy: (c, log) => refreshCodebuddyIntlToken(c.refreshToken, log),
   trae: (c, log) => refreshTraeToken(c.refreshToken, c, log),
   cline: (c, log) => refreshClineToken(c.refreshToken, log),
+  // ClinePass shares Cline's WorkOS auth endpoints, so the same refresh works.
+  clinepass: (c, log) => refreshClineToken(c.refreshToken, log),
   zed: () => refreshZedToken(),
   windsurf: (c, log) => refreshWindsurfToken(c, log),
   // Kimi Code OAuth (merged into id `kimi`); legacy id still routes here

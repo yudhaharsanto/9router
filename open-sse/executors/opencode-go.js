@@ -3,6 +3,11 @@ import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
 import {
+  hasValidOpenCodeVersion,
+  generateRequestId as generateOpencodeRequestId,
+  OPENCODE_DEFAULT_UA,
+} from "./opencode.js";
+import {
   normalizeResponsesInput,
   clampResponsesCallId,
   coerceResponsesArguments,
@@ -185,6 +190,16 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   buildHeaders(credentials, stream = true, url, model) {
     const headers = super.buildHeaders(credentials || {}, stream, url, model);
+    // Mirror upstream fingerprint defaults (parity with 9router-go ForwardOpencodeGo).
+    if (
+      !headers["User-Agent"] ||
+      !hasValidOpenCodeVersion(headers["User-Agent"])
+    ) {
+      headers["User-Agent"] = OPENCODE_DEFAULT_UA;
+    }
+    if (!headers["x-opencode-client"]) headers["x-opencode-client"] = "desktop";
+    if (!headers["x-opencode-request"])
+      headers["x-opencode-request"] = generateOpencodeRequestId();
     const prepared = credentials?.[SESSION_FIELD];
     if (prepared) {
       headers[SESSION_HEADER] = prepared;

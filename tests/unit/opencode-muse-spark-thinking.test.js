@@ -132,4 +132,27 @@ describe("OpenCode Free Muse Spark thinking", () => {
       expect(out.max_tokens).toBeUndefined();
     }
   });
+
+  it("strips reasoning items, encrypted props, and forces auto tool_choice on 1.3", () => {
+    const executor = new OpenCodeExecutor();
+    const body = {
+      input: [
+        { type: "reasoning", summary: [] },
+        { type: "message", role: "assistant", encrypted_content: "enc", reasoning_encrypted_content: "renc", content: [] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+      ],
+      tool_choice: { type: "function", name: "read" },
+      reasoning: { effort: "high" },
+    };
+
+    const out = executor.transformRequest("muse-spark-1.3-contributor-free", body, true, {
+      connectionId: "opencode-muse-spark-strip-test",
+    });
+
+    expect(out.input.some((item) => item.type === "reasoning")).toBe(false);
+    const assistant = out.input.find((item) => item.role === "assistant");
+    expect(assistant.encrypted_content).toBeUndefined();
+    expect(assistant.reasoning_encrypted_content).toBeUndefined();
+    expect(out.tool_choice).toBe("auto");
+  });
 });

@@ -1912,6 +1912,16 @@ export default function ProviderDetailPage() {
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Connections</h2>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              {providerId === "codebuddy-intl" && (
+                <Button
+                  size="sm"
+                  icon="smart_toy"
+                  variant="secondary"
+                  onClick={() => setShowAutomationCodeBuddyIntl(true)}
+                >
+                  {translate("Automation")}
+                </Button>
+              )}
               {connections.length > 0 && proxyPools.length > 0 && (
                 <Button
                   size="sm"
@@ -2108,16 +2118,6 @@ export default function ProviderDetailPage() {
                         onClick={() => setShowBulkImportGrokCli(true)}
                       >
                         {translate("Bulk Add")}
-                      </Button>
-                    )}
-                    {providerId === "codebuddy-intl" && (
-                      <Button
-                        size="sm"
-                        icon="smart_toy"
-                        variant="secondary"
-                        onClick={() => setShowAutomationCodeBuddyIntl(true)}
-                      >
-                        {translate("Automation")}
                       </Button>
                     )}
                     <Button size="sm" icon="add" onClick={triggerAddConnection}>

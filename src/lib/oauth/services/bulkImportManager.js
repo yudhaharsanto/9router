@@ -223,6 +223,7 @@ function sanitizeJob(job, extras = {}) {
     status: job.status,
     summary: buildSummary(job.accounts),
     concurrency: job.concurrency,
+    proxyStrategy: job.proxyStrategy || "random",
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
@@ -450,7 +451,18 @@ export class BulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyPoolIds }) {
+  async startJob({
+    accounts,
+    concurrency,
+    engine,
+    proxyUrl,
+    proxyPoolIds,
+    proxyStrategy,
+  }) {
+    const normalizedProxyStrategy =
+      proxyStrategy === "roundrobin" || proxyStrategy === "round-robin"
+        ? "roundrobin"
+        : "random";
     const { parsed, invalidLines } = parseBulkAccounts(accounts);
     if (!parsed.length) {
       const error =
@@ -497,6 +509,7 @@ export class BulkImportManager {
       engine: resolvedEngine,
       proxyUrl: proxyUrl || null,
       proxyPoolIds: Array.isArray(proxyPoolIds) ? proxyPoolIds : [],
+      proxyStrategy: normalizedProxyStrategy,
       resolvedProxyUrls,
       proxyRotationIndex: 0,
       createdAt,
@@ -564,12 +577,19 @@ export class BulkImportManager {
   }
 
   /**
-   * Assign the next proxy URL to an account using round-robin rotation.
+   * Assign the next proxy URL to an account.
+   * `roundrobin` cycles sequentially; default `random` picks randomly.
    * Called when an account is dequeued.
    */
   assignProxyToAccount(job, account) {
     if (!job.resolvedProxyUrls || job.resolvedProxyUrls.length === 0) {
       account.resolvedProxyUrl = null;
+      return;
+    }
+    if (job.proxyStrategy === "roundrobin") {
+      const idx = (job.proxyRotationIndex || 0) % job.resolvedProxyUrls.length;
+      job.proxyRotationIndex = (job.proxyRotationIndex || 0) + 1;
+      account.resolvedProxyUrl = job.resolvedProxyUrls[idx];
       return;
     }
     const idx = Math.floor(Math.random() * job.resolvedProxyUrls.length);

@@ -82,13 +82,14 @@ export class CodeBuddyIntlBulkImportManager extends BulkImportManager {
     this.saveConnection = saveConnection;
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyPoolIds }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl, proxyPoolIds, proxyStrategy }) {
     return super.startJob({
       accounts,
       concurrency,
       engine: "camoufox",
       proxyUrl,
       proxyPoolIds,
+      proxyStrategy,
     });
   }
 

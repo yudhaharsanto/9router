@@ -50,6 +50,7 @@ export async function POST(request) {
       engine: body?.engine,
       proxyUrl,
       proxyPoolIds,
+      proxyStrategy: body?.proxyStrategy,
     });
 
     return NextResponse.json({

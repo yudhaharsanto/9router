@@ -192,13 +192,11 @@ export function getPaginationPageValue(dataPagination, fallbackPage) {
   return dataPagination?.page || fallbackPage;
 }
 
-// Providers yang balance-nya ditampilkan inline di dashboard/providers/[id]
+// autoclaw balance ditampilkan inline di dashboard/providers/[id]
 // dan tidak perlu muncul di halaman Quota Tracker (menghindari duplikasi UI).
-export const QUOTA_TRACKER_HIDDEN_PROVIDERS = new Set([
-  "autoclaw",
-  "codebuddy-cn",
-  "codebuddy-intl",
-]);
+// ponytail: upstream hapus set ini sepenuhnya (autoclaw dihapus + codebuddy
+// tampil di tracker); lokal pertahankan untuk autoclaw saja.
+export const QUOTA_TRACKER_HIDDEN_PROVIDERS = new Set(["autoclaw"]);
 
 export function getProviderOptions(dataProviderOptions) {
   return (dataProviderOptions || []).filter(
@@ -575,7 +573,7 @@ export function parseQuotaData(provider, data) {
 
       case "codebuddy-cn":
       case "codebuddy-intl":
-        // CodeBuddy mixes recurring refill packs ("Monthly"/"Weekly"/...)
+        // CodeBuddy CN mixes recurring refill packs ("Monthly"/"Weekly"/...)
         // with one-shot bonus packs ("Bonus Pack N"). Forward `recurring`
         // so the UI can show "Expires in" for bonus packs (whose resetAt is
         // a hard expiry, not a refresh) instead of "Reset in".
@@ -634,6 +632,8 @@ export function parseQuotaData(provider, data) {
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
               remainingPercentage: quota.remainingPercentage,
+              isCreditBalance: quota.isCreditBalance ?? true,
+              currency: quota.currency || (name.includes("(") ? name.slice(name.indexOf("(") + 1, name.indexOf(")")) : "USD"),
             });
           });
         }

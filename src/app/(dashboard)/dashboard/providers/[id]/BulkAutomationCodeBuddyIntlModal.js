@@ -21,6 +21,7 @@ export default function BulkAutomationCodeBuddyIntlModal({ isOpen, onClose, onSu
   const [accountsText, setAccountsText] = useState("");
   const [concurrency, setConcurrency] = useState("1");
   const [proxyPoolId, setProxyPoolId] = useState(NONE_VALUE);
+  const [proxyStrategy, setProxyStrategy] = useState("random");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState(null);
@@ -82,6 +83,7 @@ export default function BulkAutomationCodeBuddyIntlModal({ isOpen, onClose, onSu
         body: JSON.stringify({
           accounts,
           concurrency: Number.parseInt(concurrency, 10) || 1,
+          proxyStrategy,
           ...(proxyPoolId !== NONE_VALUE ? { proxyPoolIds: [proxyPoolId] } : {}),
         }),
       });
@@ -164,6 +166,15 @@ export default function BulkAutomationCodeBuddyIntlModal({ isOpen, onClose, onSu
                 ]}
                 placeholder="None"
               />
+              <Select
+                label="Proxy Mode"
+                value={proxyStrategy}
+                onChange={(e) => setProxyStrategy(e.target.value)}
+                options={[
+                  { value: "random", label: "Random" },
+                  { value: "roundrobin", label: "Round-robin" },
+                ]}
+              />
             </div>
           </>
         )}
@@ -183,6 +194,19 @@ export default function BulkAutomationCodeBuddyIntlModal({ isOpen, onClose, onSu
                 </>
               )}
             </div>
+            {job.preview?.imageData && (
+              <div className="flex flex-col gap-1">
+                <div className="text-xs text-text-muted">
+                  Live browser — {job.preview.email || ""} {job.preview.step ? `· ${job.preview.step}` : ""}
+                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={job.preview.imageData}
+                  alt="Live automation browser preview"
+                  className="w-full rounded border border-accent/20"
+                />
+              </div>
+            )}
             <ul className="rounded border border-accent/20 bg-sidebar/50 p-2 text-xs font-mono max-h-64 overflow-y-auto flex flex-col gap-2">
               {(job.accounts || []).map((a) => (
                 <li key={a.line} className="border-b border-accent/10 pb-1">

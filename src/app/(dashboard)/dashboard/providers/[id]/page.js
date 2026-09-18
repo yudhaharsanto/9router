@@ -22,6 +22,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
+import BulkAutomationCodeBuddyIntlModal from "./BulkAutomationCodeBuddyIntlModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -54,6 +55,7 @@ export default function ProviderDetailPage() {
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showBulkImportGrokCli, setShowBulkImportGrokCli] = useState(false);
+  const [showAutomationCodeBuddyIntl, setShowAutomationCodeBuddyIntl] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
@@ -2108,6 +2110,16 @@ export default function ProviderDetailPage() {
                         {translate("Bulk Add")}
                       </Button>
                     )}
+                    {providerId === "codebuddy-intl" && (
+                      <Button
+                        size="sm"
+                        icon="smart_toy"
+                        variant="secondary"
+                        onClick={() => setShowAutomationCodeBuddyIntl(true)}
+                      >
+                        {translate("Automation")}
+                      </Button>
+                    )}
                     <Button size="sm" icon="add" onClick={triggerAddConnection}>
                       {isCompatible ? "Add API Key" : "Add"}
                     </Button>
@@ -2424,6 +2436,15 @@ export default function ProviderDetailPage() {
           isOpen={showBulkImportGrokCli}
           onClose={() => setShowBulkImportGrokCli(false)}
           onSuccess={fetchConnections}
+        />
+      )}
+
+      {providerId === "codebuddy-intl" && (
+        <BulkAutomationCodeBuddyIntlModal
+          isOpen={showAutomationCodeBuddyIntl}
+          onClose={() => setShowAutomationCodeBuddyIntl(false)}
+          onSuccess={fetchConnections}
+          proxyPools={proxyPools}
         />
       )}
 

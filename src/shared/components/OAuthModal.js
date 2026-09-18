@@ -498,7 +498,6 @@ export default function OAuthModal({
               setStep("input");
             }
           }
-        }
       } catch (err) {
         setError(err.message);
         setStep("error");

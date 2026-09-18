@@ -174,7 +174,7 @@ function CodeBuddyIntlAutomationPanel({ providerInfo, onRefresh }) {
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Link
-          href="/dashboard/automation/codebuddy/bulk"
+          href="/dashboard/automation/codebuddy-intl/bulk"
           className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
         >
           <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
@@ -207,7 +207,7 @@ function CodeBuddyIntlAutomationPanel({ providerInfo, onRefresh }) {
       </div>
       <OAuthModal
         isOpen={isOAuthOpen}
-        provider="codebuddy"
+        provider="codebuddy-intl"
         providerInfo={providerInfo}
         onSuccess={() => {
           onRefresh?.();
@@ -245,7 +245,7 @@ const AUTOMATION_PROVIDERS = [
     component: CodeBuddyAutomationPanel,
   },
   {
-    id: "codebuddy",
+    id: "codebuddy-intl",
     label: "CodeBuddy",
     icon: "smart_toy",
     description:

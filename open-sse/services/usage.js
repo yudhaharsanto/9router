@@ -86,13 +86,6 @@ const USAGE_HANDLERS = {
       c.providerSpecificData,
       c.proxyOptions,
     ),
-  codebuddy: (c) =>
-    getCodeBuddyIntlUsage(
-      c.accessToken,
-      c.apiKey,
-      c.providerSpecificData,
-      c.proxyOptions,
-    ),
   autoclaw: (c) => getAutoClawUsage(c.accessToken || c.apiKey, c.proxyOptions),
   "grok-cli": (c) =>
     getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),

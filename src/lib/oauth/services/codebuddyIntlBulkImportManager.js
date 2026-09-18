@@ -4,7 +4,7 @@ import {
   parseBulkAccounts,
 } from "./bulkImportManager.js";
 
-const CODEBUDDY_PROVIDER_ID = "codebuddy";
+const CODEBUDDY_PROVIDER_ID = "codebuddy-intl";
 const CODEBUDDY_LABEL = "CodeBuddy";
 const CODEBUDDY_TIMEOUT_MS = 5 * 60_000;
 
@@ -191,7 +191,7 @@ async function defaultSaveCodeBuddyConnection({
     name: email,
     email,
     providerSpecificData: {
-      sourceId: "codebuddy",
+      sourceId: "codebuddy-intl",
       automation: "google-login-bulk",
       sessionCookies: sessionCookies || null,
     },

@@ -11,7 +11,7 @@ export default function CodeBuddyBulkPage() {
     <div className="flex min-w-0 flex-col gap-4 px-1 sm:px-0">
       <div className="flex items-center gap-3">
         <Link
-          href="/dashboard/automation?provider=codebuddy"
+          href="/dashboard/automation?provider=codebuddy-intl"
           className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-main hover:border-primary/40 hover:bg-primary/5"
         >
           <span className="material-symbols-outlined text-[18px]">
@@ -31,7 +31,7 @@ export default function CodeBuddyBulkPage() {
 
       <BulkAccountAutomationModal
         asPage
-        provider="codebuddy"
+        provider="codebuddy-intl"
         title="CodeBuddy Bulk Google Auto Login"
         serviceName="CodeBuddy"
         onSuccess={() => router.refresh()}

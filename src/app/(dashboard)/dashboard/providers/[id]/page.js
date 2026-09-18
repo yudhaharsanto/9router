@@ -594,7 +594,7 @@ export default function ProviderDetailPage() {
   // it inline next to each connection row. Refreshed on mount.
   useEffect(() => {
     if (
-      !["autoclaw", "codebuddy", "codebuddy-cn", "inferhub"].includes(
+      !["autoclaw", "codebuddy-cn", "codebuddy-intl", "inferhub"].includes(
         providerId,
       ) ||
       connections.length === 0
@@ -1302,7 +1302,7 @@ export default function ProviderDetailPage() {
               isFirst={index === 0}
               isLast={index === connections.length - 1}
               balance={
-                ["autoclaw", "codebuddy", "codebuddy-cn", "inferhub"].includes(
+                ["autoclaw", "codebuddy-cn", "codebuddy-intl", "inferhub"].includes(
                   providerId,
                 )
                   ? inlineBalances[conn.id]

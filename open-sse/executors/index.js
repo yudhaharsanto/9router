@@ -57,7 +57,6 @@ const executors = {
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
   "codebuddy-intl": new CodeBuddyIntlExecutor(),
-  codebuddy: new CodeBuddyIntlExecutor(), // legacy local id → intl
   trae: new TraeExecutor(),
   zed: new ZedExecutor(),
   windsurf: new WindsurfExecutor(),

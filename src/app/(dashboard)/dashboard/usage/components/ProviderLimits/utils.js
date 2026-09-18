@@ -196,8 +196,8 @@ export function getPaginationPageValue(dataPagination, fallbackPage) {
 // dan tidak perlu muncul di halaman Quota Tracker (menghindari duplikasi UI).
 export const QUOTA_TRACKER_HIDDEN_PROVIDERS = new Set([
   "autoclaw",
-  "codebuddy",
   "codebuddy-cn",
+  "codebuddy-intl",
 ]);
 
 export function getProviderOptions(dataProviderOptions) {
@@ -574,7 +574,7 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "codebuddy-cn":
-      case "codebuddy":
+      case "codebuddy-intl":
         // CodeBuddy mixes recurring refill packs ("Monthly"/"Weekly"/...)
         // with one-shot bonus packs ("Bonus Pack N"). Forward `recurring`
         // so the UI can show "Expires in" for bonus packs (whose resetAt is

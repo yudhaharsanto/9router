@@ -1222,7 +1222,7 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         );
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
-      case "codebuddy": {
+      case "codebuddy-intl": {
         // Test against the chat completions endpoint with a minimal request.
         // 401 = invalid key, otherwise the key is accepted.
         const headers = {

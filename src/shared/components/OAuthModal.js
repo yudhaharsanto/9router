@@ -316,6 +316,7 @@ export default function OAuthModal({
               deviceCodeUrl.searchParams.set("region", idcConfig.region);
             }
             deviceCodeUrl.searchParams.set("auth_method", "idc");
+          }
             const res = await fetch(deviceCodeUrl.toString());
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);

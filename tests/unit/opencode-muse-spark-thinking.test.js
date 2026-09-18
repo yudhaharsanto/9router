@@ -236,4 +236,85 @@ describe("OpenCode Free Muse Spark thinking", () => {
     );
     expect(passthrough["x-opencode-session"]).toBe(native);
   });
+
+  it("injects the free-tier fingerprint quartet and forces streaming", () => {
+    const executor = new OpenCodeExecutor();
+    const extra = {
+      type: "function",
+      function: {
+        name: "my_tool",
+        description: "x",
+        parameters: { type: "object", properties: {} },
+      },
+    };
+
+    const chat = executor.transformRequest(
+      "mimo-v2.5-free",
+      {
+        messages: [{ role: "user", content: "hi" }],
+        tools: [extra],
+        stream: false,
+      },
+      false,
+      {},
+    );
+    expect(chat.stream).toBe(true);
+    expect(chat.tools.map((t) => t.function.name).sort()).toEqual([
+      "bash",
+      "glob",
+      "grep",
+      "my_tool",
+      "read",
+    ]);
+    expect(chat.tools.find((t) => t.function.name === "my_tool")).toBe(extra);
+
+    const responses = executor.transformRequest(
+      "muse-spark-1.3-contributor-free",
+      {
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "hi" }],
+          },
+        ],
+      },
+      false,
+      {},
+    );
+    expect(responses.stream).toBe(true);
+    // Responses tool shape is flat, not nested under `function`.
+    expect(responses.tools.map((t) => t.name).sort()).toEqual([
+      "bash",
+      "glob",
+      "grep",
+      "read",
+    ]);
+    expect(
+      responses.tools.every((t) => t.type === "function" && t.parameters),
+    ).toBe(true);
+  });
+
+  it("does not duplicate fingerprint tools already supplied by the caller", () => {
+    const executor = new OpenCodeExecutor();
+    const supplied = ["bash", "glob", "grep", "read"].map((name) => ({
+      type: "function",
+      function: {
+        name,
+        description: "caller",
+        parameters: { type: "object", properties: {} },
+      },
+    }));
+
+    const out = executor.transformRequest(
+      "mimo-v2.5-free",
+      { messages: [], tools: supplied },
+      true,
+      {},
+    );
+    expect(out.tools).toHaveLength(4);
+    expect(out.tools.every((t) => t.function.description === "caller")).toBe(
+      true,
+    );
+  });
 });

@@ -9,6 +9,7 @@ import {
   checkApiKeyLimit,
   checkApiKeyModelAllowed,
   checkApiKeyRpm,
+  rotateNoAuthProviderProxy,
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
@@ -327,6 +328,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      // On upstream 429 through a pooled proxy, rotate to another pool entry
+      // and retry inside the executor — the client never sees the rate limit.
+      rotateProxy: async () =>
+        rotateNoAuthProviderProxy(provider, credentials.providerSpecificData?.connectionProxyPoolId),
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {

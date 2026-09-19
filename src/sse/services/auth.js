@@ -56,6 +56,34 @@ function isGrokCliFreeUsageExhausted(errorText, provider) {
 }
 
 /**
+ * Rotate a no-auth free provider to a different active proxy pool entry,
+ * excluding the one that just rate-limited. Returns updated
+ * providerSpecificData, or null when there is nothing to rotate to
+ * (pool strategy off / single active pool).
+ */
+export async function rotateNoAuthProviderProxy(providerId, excludePoolId) {
+  if (!FREE_PROVIDERS[resolveProviderId(providerId)]?.noAuth) return null;
+  const settings = await getSettings();
+  const override = (settings.providerStrategies || {})[resolveProviderId(providerId)] || {};
+  const strategy = override.rotateStrategy || "none";
+  if (strategy === "none") return null;
+  const allPools = await getProxyPools({ isActive: true });
+  const poolIds = allPools
+    .filter((p) => p.proxyUrl && p.id !== excludePoolId)
+    .map((p) => p.id);
+  if (poolIds.length === 0) return null;
+  const pickedId = pickProxyPoolId(poolIds, strategy, resolveProviderId(providerId));
+  const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId });
+  return {
+    connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
+    connectionProxyUrl: resolvedProxy.connectionProxyUrl,
+    connectionNoProxy: resolvedProxy.connectionNoProxy,
+    connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
+    vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
+  };
+}
+
+/**
  * Get provider credentials from localDb
  * Filters out unavailable accounts and returns the selected account based on strategy
  * @param {string} provider - Provider name

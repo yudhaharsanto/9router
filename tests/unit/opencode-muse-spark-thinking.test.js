@@ -214,12 +214,24 @@ describe("OpenCode Free Muse Spark thinking", () => {
     // User message, function_call, function_call_output, and next user message survive
     const types = out.input.map((item) => item.type);
     expect(types).toEqual(["message", "function_call", "function_call_output", "message"]);
-    // Tools flattened and empty properties added
+    // Tools flattened and empty properties added; free-tier decoys (bash+read) appended
     expect(out.tools).toEqual([
       {
         type: "function",
         name: "shell",
         description: "Run shell command",
+        parameters: { type: "object", properties: {} },
+      },
+      {
+        type: "function",
+        name: "bash",
+        description: expect.any(String),
+        parameters: { type: "object", properties: {} },
+      },
+      {
+        type: "function",
+        name: "read",
+        description: expect.any(String),
         parameters: { type: "object", properties: {} },
       },
     ]);

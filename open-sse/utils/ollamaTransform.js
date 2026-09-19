@@ -2,15 +2,7 @@
 export function transformToOllama(response, model) {
   let buffer = "";
   let pendingToolCalls = {};
-  let doneSent = false;
-
-  const emitDone = (controller) => {
-    if (doneSent) return;
-    doneSent = true;
-    const ollamaEnd = JSON.stringify({ model, message: { role: "assistant", content: "" }, done: true }) + "\n";
-    controller.enqueue(new TextEncoder().encode(ollamaEnd));
-  };
-
+  
   const transform = new TransformStream({
     transform(chunk, controller) {
       const text = new TextDecoder().decode(chunk);
@@ -21,9 +13,10 @@ export function transformToOllama(response, model) {
       for (const line of lines) {
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
-
+        
         if (data === "[DONE]") {
-          emitDone(controller);
+          const ollamaEnd = JSON.stringify({ model, message: { role: "assistant", content: "" }, done: true }) + "\n";
+          controller.enqueue(new TextEncoder().encode(ollamaEnd));
           return;
         }
 
@@ -59,16 +52,16 @@ export function transformToOllama(response, model) {
                   arguments: (() => { try { return JSON.parse(tc.function.arguments || "{}"); } catch { return {}; } })()
                 }
               }));
-              const ollama = JSON.stringify({
-                model,
-                message: { role: "assistant", content: "", tool_calls: formattedCalls },
+              const ollama = JSON.stringify({ 
+                model, 
+                message: { role: "assistant", content: "", tool_calls: formattedCalls }, 
                 done: true
               }) + "\n";
               controller.enqueue(new TextEncoder().encode(ollama));
               pendingToolCalls = {};
-              doneSent = true;
             } else if (finishReason === "stop") {
-              emitDone(controller);
+              const ollamaEnd = JSON.stringify({ model, message: { role: "assistant", content: "" }, done: true }) + "\n";
+              controller.enqueue(new TextEncoder().encode(ollamaEnd));
             }
           }
         } catch (e) {
@@ -77,7 +70,8 @@ export function transformToOllama(response, model) {
       }
     },
     flush(controller) {
-      emitDone(controller);
+      const ollamaEnd = JSON.stringify({ model, message: { role: "assistant", content: "" }, done: true }) + "\n";
+      controller.enqueue(new TextEncoder().encode(ollamaEnd));
     }
   });
 

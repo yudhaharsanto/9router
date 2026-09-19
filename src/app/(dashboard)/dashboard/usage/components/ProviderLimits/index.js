@@ -41,7 +41,6 @@ import {
 import Card from "@/shared/components/Card";
 import { ConfirmModal, EditConnectionModal } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
-import { QUOTA_TRACKER_HIDDEN_PROVIDERS } from "./utils";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
@@ -784,7 +783,7 @@ export default function ProviderLimits() {
         expiringFirst,
         providerFilter,
         quotaSortMode,
-      ).filter((c) => !QUOTA_TRACKER_HIDDEN_PROVIDERS.has(c.provider)),
+      ),
     [connections, quotaData, expiringFirst, providerFilter, quotaSortMode],
   );
 

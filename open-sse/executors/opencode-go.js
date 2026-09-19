@@ -1,18 +1,13 @@
 import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
-import { isMuseSparkModel } from "../providers/models/helpers.js";
-import {
-  hasValidOpenCodeVersion,
-  generateRequestId as generateOpencodeRequestId,
-  OPENCODE_DEFAULT_UA,
-} from "./opencode.js";
+import { modelTargetFormat } from "../providers/models/schema.js";
+import { getProviderModels } from "../config/providerModels.js";
 import {
   normalizeResponsesInput,
   clampResponsesCallId,
   coerceResponsesArguments,
   coerceResponsesOutput,
-  normalizeMuseSparkResponsesBody,
 } from "../translator/formats/responsesApi.js";
 
 const SESSION_HEADER = "x-opencode-session";
@@ -48,13 +43,14 @@ function translatedSession(sessionId, clientTool) {
 
 // Strip the thinking suffix "model(level)" so checks hit the base id.
 function baseModelId(model) {
-  return String(model || "")
-    .replace(/\([^()]+\)\s*$/, "")
-    .trim();
+  return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
 }
 
+// Responses-only per the provider registry (grok-4.6, gpt-5.6-luna, muse-spark, …).
+// Reading the registry keeps this in sync with config — never hardcode model ids here.
 function isResponsesModel(model) {
-  return isMuseSparkModel(baseModelId(model));
+  const entry = getProviderModels("opencode-go").find((m) => m.id === baseModelId(model));
+  return modelTargetFormat(entry) === "openai-responses";
 }
 
 // Flatten Chat Completions tool declarations into the Responses flat shape and
@@ -64,40 +60,17 @@ function normalizeResponsesTools(body) {
   const validNames = new Set();
   body.tools = body.tools.filter((tool) => {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
-    const fn =
-      tool.function &&
-      typeof tool.function === "object" &&
-      !Array.isArray(tool.function)
-        ? tool.function
-        : null;
-    const rawName =
-      typeof tool.name === "string"
-        ? tool.name
-        : typeof fn?.name === "string"
-          ? fn.name
-          : "";
+    const fn = tool.function && typeof tool.function === "object" && !Array.isArray(tool.function) ? tool.function : null;
+    const rawName = typeof tool.name === "string" ? tool.name : (typeof fn?.name === "string" ? fn.name : "");
     const name = rawName.trim();
     if (!name) return false;
-    const description =
-      typeof tool.description === "string"
-        ? tool.description
-        : typeof fn?.description === "string"
-          ? fn.description
-          : "";
-    let parameters =
-      tool.parameters &&
-      typeof tool.parameters === "object" &&
-      !Array.isArray(tool.parameters)
-        ? tool.parameters
-        : fn?.parameters &&
-            typeof fn.parameters === "object" &&
-            !Array.isArray(fn.parameters)
-          ? fn.parameters
-          : { type: "object", properties: {} };
+    const description = typeof tool.description === "string" ? tool.description : (typeof fn?.description === "string" ? fn.description : "");
+    let parameters = (tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters))
+      ? tool.parameters
+      : (fn?.parameters && typeof fn.parameters === "object" && !Array.isArray(fn.parameters) ? fn.parameters : { type: "object", properties: {} });
     // Mirror the request translator: {type:"object"} without properties is rejected
     // by strict Responses backends, so fill in the empty properties map.
-    if (parameters.type === "object" && !parameters.properties)
-      parameters = { ...parameters, properties: {} };
+    if (parameters.type === "object" && !parameters.properties) parameters = { ...parameters, properties: {} };
     for (const k of Object.keys(tool)) delete tool[k];
     tool.type = "function";
     tool.name = name.slice(0, MAX_TOOL_NAME_LEN);
@@ -106,16 +79,9 @@ function normalizeResponsesTools(body) {
     validNames.add(tool.name);
     return true;
   });
-  if (
-    body.tool_choice &&
-    typeof body.tool_choice === "object" &&
-    !Array.isArray(body.tool_choice)
-  ) {
+  if (body.tool_choice && typeof body.tool_choice === "object" && !Array.isArray(body.tool_choice)) {
     if (body.tool_choice.type === "function") {
-      const n =
-        typeof body.tool_choice.name === "string"
-          ? body.tool_choice.name.trim()
-          : "";
+      const n = typeof body.tool_choice.name === "string" ? body.tool_choice.name.trim() : "";
       if (!n || !validNames.has(n)) delete body.tool_choice;
     }
   }
@@ -128,13 +94,14 @@ function sanitizeResponsesItems(body) {
   if (!Array.isArray(body.input)) return;
   body.input = body.input.filter((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+    // Strip prior-turn reasoning items: Muse Spark contributor models route to
+    // an upstream Console backend where encrypted_content cannot be validated across
+    // rotated accounts or sessions, causing 400 "reasoning encrypted_content was not issued to this caller".
+    if (item.type === "reasoning") return false;
+    delete item.encrypted_content;
+    delete item.reasoning_encrypted_content;
     if (item.type === "function_call") {
-      if (
-        !item.name ||
-        typeof item.name !== "string" ||
-        item.name.trim() === ""
-      )
-        return false;
+      if (!item.name || typeof item.name !== "string" || item.name.trim() === "") return false;
       item.name = item.name.trim().slice(0, MAX_TOOL_NAME_LEN);
       item.call_id = clampResponsesCallId(item.call_id);
       item.arguments = coerceResponsesArguments(item.arguments);
@@ -160,22 +127,15 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
     return super.buildUrl(model, stream, urlIndex, credentials);
   }
 
-  prepareRequestCredentials({
-    body,
-    credentials,
-    providerSessionId,
-    clientTool,
-  } = {}) {
+  prepareRequestCredentials({ body, credentials, providerSessionId, clientTool } = {}) {
     const sourceCredentials = credentials || {};
     const native = nativeSession(sourceCredentials.rawHeaders);
-    const resolved =
-      normalizeSession(providerSessionId) ||
-      resolveSessionId({
-        headers: sourceCredentials.rawHeaders,
-        body,
-        connectionId: sourceCredentials.connectionId,
-        scope: "opencode-go",
-      });
+    const resolved = normalizeSession(providerSessionId) || resolveSessionId({
+      headers: sourceCredentials.rawHeaders,
+      body,
+      connectionId: sourceCredentials.connectionId,
+      scope: "opencode-go",
+    });
 
     return {
       ...sourceCredentials,
@@ -190,16 +150,6 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   buildHeaders(credentials, stream = true, url, model) {
     const headers = super.buildHeaders(credentials || {}, stream, url, model);
-    // Mirror upstream fingerprint defaults (parity with 9router-go ForwardOpencodeGo).
-    if (
-      !headers["User-Agent"] ||
-      !hasValidOpenCodeVersion(headers["User-Agent"])
-    ) {
-      headers["User-Agent"] = OPENCODE_DEFAULT_UA;
-    }
-    if (!headers["x-opencode-client"]) headers["x-opencode-client"] = "desktop";
-    if (!headers["x-opencode-request"])
-      headers["x-opencode-request"] = generateOpencodeRequestId();
     const prepared = credentials?.[SESSION_FIELD];
     if (prepared) {
       headers[SESSION_HEADER] = prepared;
@@ -217,31 +167,19 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
     const normalized = normalizeResponsesInput(out.input);
     if (normalized) out.input = normalized;
     if (!Array.isArray(out.input) || out.input.length === 0) {
-      out.input = [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "..." }],
-        },
-      ];
+      out.input = [{ type: "message", role: "user", content: [{ type: "input_text", text: "..." }] }];
     }
     // Responses names the output cap max_output_tokens, not max_tokens.
     if (out.max_output_tokens === undefined) {
-      if (out.max_completion_tokens !== undefined)
-        out.max_output_tokens = out.max_completion_tokens;
-      else if (out.max_tokens !== undefined)
-        out.max_output_tokens = out.max_tokens;
+      if (out.max_completion_tokens !== undefined) out.max_output_tokens = out.max_completion_tokens;
+      else if (out.max_tokens !== undefined) out.max_output_tokens = out.max_tokens;
     }
     delete out.max_tokens;
     delete out.max_completion_tokens;
     if (out.reasoning_effort !== undefined && out.reasoning === undefined) {
       out.reasoning = { effort: out.reasoning_effort, summary: "auto" };
     }
-    if (
-      out.reasoning &&
-      typeof out.reasoning === "object" &&
-      !Array.isArray(out.reasoning)
-    ) {
+    if (out.reasoning && typeof out.reasoning === "object" && !Array.isArray(out.reasoning)) {
       if (!out.reasoning.summary) out.reasoning.summary = "auto";
     }
     delete out.reasoning_effort;
@@ -249,7 +187,6 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
     out.store = false;
     normalizeResponsesTools(out);
     sanitizeResponsesItems(out);
-    normalizeMuseSparkResponsesBody(out, baseModelId(model || body?.model));
     return out;
   }
 }

@@ -436,7 +436,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
             proxyOptions,
           });
           if (retryResult.response.ok) {
-            await providerResponse.body?.cancel().catch(() => {});
             providerResponse = retryResult.response;
             providerUrl = retryResult.url;
             providerResponseFormat = retryResult.responseFormat || targetFormat;

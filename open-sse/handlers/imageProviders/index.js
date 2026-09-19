@@ -19,7 +19,6 @@ const ADAPTERS = {
   openrouter: createOpenAIAdapter("openrouter"),
   recraft: createOpenAIAdapter("recraft"),
   "vercel-ai-gateway": createOpenAIAdapter("vercel-ai-gateway"),
-  inferhub: createOpenAIAdapter("inferhub"),
   xai: createOpenAIAdapter("xai"),
   gemini,
   codex,

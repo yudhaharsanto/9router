@@ -116,10 +116,7 @@
     "devin": "devin",
     "devin-cli": "devin-cli",
     "morph": "morph",
-    "morphllm": "morph",
-    "inferhub": "inferhub",
-    "ih": "inferhub",
-    "gnrt": "gnrt"
+    "morphllm": "morph"
   },
   "idToAlias": {
     "alicode": "alicode",
@@ -130,7 +127,6 @@
     "antigravity": "ag",
     "api-airforce": "af",
     "assemblyai": "assemblyai",
-    "autoclaw": "aclaw",
     "azure": "azure",
     "baidu": "qianfan",
     "bazaarlink": "bzl",
@@ -159,13 +155,11 @@
     "gitlab": "gitlab",
     "glm": "glm",
     "glm-cn": "glm-cn",
-    "gnrt": "gnrt",
     "grok-cli": "gcli",
     "grok-web": "grok-web",
     "groq": "groq",
     "hyperbolic": "hyperbolic",
     "iflow": "if",
-    "inferhub": "inferhub",
     "kilo-gateway": "kgw",
     "kilocode": "kc",
     "kimchi": "kimchi",
@@ -208,7 +202,6 @@
     "zed": "zd"
   },
   "modelKeys": [
-    "aclaw",
     "af",
     "ag",
     "alicode",

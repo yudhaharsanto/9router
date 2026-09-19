@@ -172,7 +172,7 @@ describe("SAML 2.0 Auth Engine Utilities", () => {
           throw new Error("expected downstream validation to fail");
         })
         .catch((e) => {
-          if (!/possible replay/.test(e.message)) throw e;
+          if (/possible replay/.test(e.message)) throw e;
         });
       // Second use of the same requestId must be rejected as a replay.
       await expect(

@@ -114,6 +114,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     flowType: provider.flowType,
     fixedPort: provider.fixedPort,
     callbackPath: provider.callbackPath || "/callback",
+    ...(config.systemId ? { systemId: config.systemId } : {}),
   };
 }
 

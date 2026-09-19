@@ -869,11 +869,12 @@ let zedProxyTimeout = null;
 let zedProxyPort = null;
 let zedSession = null;
 
-export function registerZedSession({ state, codeVerifier }) {
+export function registerZedSession({ state, codeVerifier, systemId }) {
   if (!state || !codeVerifier) return false;
   zedSession = {
     state,
     codeVerifier,
+    systemId: systemId || null,
     status: "pending",
     createdAt: Date.now(),
   };
@@ -891,6 +892,10 @@ export function clearZedSession(state) {
 export function startZedProxy(preferredPort = 0) {
   return new Promise((resolve) => {
     if (zedProxyServer) {
+      // Reuse the live listener, but renew its idle timeout so a previous
+      // flow's deadline can never kill the flow that just adopted the port.
+      if (zedProxyTimeout) clearTimeout(zedProxyTimeout);
+      zedProxyTimeout = setTimeout(() => { console.log("[Zed proxy] timeout, stopping"); stopZedProxy(); }, ZED_HOSTED_CONFIG.oauthTimeoutMs);
       resolve({
         success: true,
         port: zedProxyPort,
@@ -929,6 +934,18 @@ export function startZedProxy(preferredPort = 0) {
         res.end(renderCodexResultPage(false, "Cross-origin callback rejected"));
         return;
       }
+      // A genuine Zed redirect always carries user_id + access_token. Anything
+      // else is NOT callback: answer without touching session, keep server.
+      const qp = url.searchParams;
+      const hasZedParams =
+        qp.has("user_id") || qp.has("userId") ||
+        qp.has("access_token") || qp.has("accessToken") || qp.has("token");
+      if (!hasZedParams) {
+        console.log(`[Zed proxy] ignoring non-callback ${req.method} ${url.pathname} (session kept, server kept)`);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, "Waiting for Zed sign-in — this request carried no login data."));
+        return;
+      }
       // Pass raw callback path+query to exchangeTokens → parseZedCallbackPayload.
       // codeVerifier carries the encoded RSA private key for decryption.
       const rawCallback = url.search
@@ -943,6 +960,7 @@ export function startZedProxy(preferredPort = 0) {
           null,
           session.codeVerifier,
           session.state,
+          session.systemId ? { systemId: session.systemId } : undefined,
         );
         const connection = await createProviderConnection({
           provider: "zed",
@@ -955,13 +973,14 @@ export function startZedProxy(preferredPort = 0) {
         session.email = connection.email;
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderCodexResultPage(true, "You can close this window."));
+        stopZedProxy();
       } catch (err) {
         session.status = "error";
         session.error = err.message;
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderCodexResultPage(false, err.message));
-      } finally {
-        stopZedProxy();
+        // Intentionally NOT stopping here: failure may belong to superseded
+        // attempt, live callback must still land. Idle timeout bounds listener.
       }
     });
     const tryPort = Number(preferredPort) || 0;

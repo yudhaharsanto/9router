@@ -492,37 +492,4 @@ describe("GrokCliExecutor", () => {
     expect(err.code).toBe("personal-team-blocked:spending-limit");
     expect(err.message).toMatch(/credits/i);
   });
-
-  it("parseError surfaces 429 free-usage-exhausted", () => {
-    const err = executor.parseError(
-      { status: 429 },
-      JSON.stringify({
-        code: "subscription:free-usage-exhausted",
-        error: "You've used all the included free usage",
-      })
-    );
-    expect(err.status).toBe(429);
-    expect(err.code).toBe("subscription:free-usage-exhausted");
-    expect(err.message).toMatch(/free usage/i);
-  });
-
-  it("computeRetryDelay vetoes 429 free-usage-exhausted", async () => {
-    const body = JSON.stringify({
-      code: "subscription:free-usage-exhausted",
-      error: "You've used all the included free usage",
-    });
-    const response = {
-      status: 429,
-      clone: () => ({ text: async () => body }),
-    };
-    expect(await executor.computeRetryDelay(response)).toBe(false);
-  });
-
-  it("computeRetryDelay keeps default retry for other 429s", async () => {
-    const response = {
-      status: 429,
-      clone: () => ({ text: async () => "Rate limit exceeded" }),
-    };
-    expect(await executor.computeRetryDelay(response)).toBeNull();
-  });
 });

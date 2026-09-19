@@ -127,7 +127,7 @@ export class BaseExecutor {
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(model, body, stream, credentials);
-      const headers = this.buildHeaders(credentials, stream, url, model);
+      const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
@@ -152,17 +152,11 @@ export class BaseExecutor {
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
 
-        // Consume/cancel the abandoned body so undici returns the socket to the
-        // pool — otherwise a 429/5xx storm slowly exhausts connections.
-        if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) {
-          await response.body?.cancel().catch(() => {});
-          urlIndex--; continue;
-        }
+        if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) { urlIndex--; continue; }
 
         if (this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);
           lastStatus = response.status;
-          await response.body?.cancel().catch(() => {});
           continue;
         }
 

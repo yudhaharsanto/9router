@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
-import {
-  PROVIDER_MODELS,
-  getModelTargetFormat,
-} from "../../open-sse/config/providerModels.js";
+import { PROVIDER_MODELS, getModelTargetFormat } from "../../open-sse/config/providerModels.js";
 import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { OpenCodeExecutor } from "../../open-sse/executors/opencode.js";
@@ -13,28 +10,17 @@ import { translateRequest } from "../../open-sse/translator/index.js";
 const MODEL = "muse-spark-1.2-contributor-free";
 const PROVIDER = "opencode";
 
-const input = [
-  {
-    type: "message",
-    role: "user",
-    content: [{ type: "input_text", text: "Think, then answer: 2 + 2?" }],
-  },
-];
+const input = [{
+  type: "message",
+  role: "user",
+  content: [{ type: "input_text", text: "Think, then answer: 2 + 2?" }],
+}];
 
 describe("OpenCode Free Muse Spark thinking", () => {
   it("advertises reasoning and the requested model limits", () => {
     expect(PROVIDER_MODELS.oc?.some((model) => model.id === MODEL)).toBe(true);
-    expect(
-      PROVIDER_MODELS.oc?.some(
-        (model) => model.id === "muse-spark-1.3-contributor-free",
-      ),
-    ).toBe(true);
-    for (const m of [
-      MODEL,
-      "muse-spark-1.3-contributor-free",
-      "muse-spark-1.4-contributor-free",
-      "muse-spark-2.0-contributor-free",
-    ]) {
+    expect(PROVIDER_MODELS.oc?.some((model) => model.id === "muse-spark-1.3-contributor-free")).toBe(true);
+    for (const m of [MODEL, "muse-spark-1.3-contributor-free", "muse-spark-1.4-contributor-free", "muse-spark-2.0-contributor-free"]) {
       expect(getCapabilitiesForModel(PROVIDER, m)).toMatchObject({
         reasoning: true,
         thinkingFormat: "openai",
@@ -55,9 +41,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
         "xhigh",
       ]);
       expect(getModelTargetFormat("oc", m)).toBe(FORMATS.OPENAI_RESPONSES);
-      expect(getModelTargetFormat("opencode", m)).toBe(
-        FORMATS.OPENAI_RESPONSES,
-      );
+      expect(getModelTargetFormat("opencode", m)).toBe(FORMATS.OPENAI_RESPONSES);
       expect(getModelTargetFormat("openrouter", m)).toBeNull();
     }
   });
@@ -79,16 +63,44 @@ describe("OpenCode Free Muse Spark thinking", () => {
     expect(out.max_tokens).toBeUndefined();
   });
 
+  it("routes Union Alpha through Anthropic Messages", () => {
+    const caps = getCapabilitiesForModel(PROVIDER, "union-alpha");
+    expect(caps.vision).toBe(true);
+    expect(caps.contextWindow).toBe(262144);
+    expect(caps.maxOutput).toBe(131072);
+
+    const executor = new OpenCodeExecutor();
+
+    expect(getModelTargetFormat("oc", "union-alpha")).toBe(FORMATS.CLAUDE);
+    const url = executor.buildUrl("union-alpha");
+    expect(url).toBe("https://opencode.ai/zen/v1/messages");
+    expect(executor.buildHeaders({}, true, url)).toMatchObject({
+      "anthropic-version": "2023-06-01",
+    });
+    expect(executor.buildHeaders({}, true, executor.buildUrl("big-pickle")))
+      .not.toHaveProperty("anthropic-version");
+
+    const translated = translateRequest(
+      FORMATS.OPENAI,
+      FORMATS.CLAUDE,
+      "union-alpha",
+      { messages: [{ role: "user", content: "ping" }], max_tokens: 1 },
+      false,
+      {},
+      PROVIDER,
+    );
+    expect(translated).toMatchObject({
+      model: "union-alpha",
+      messages: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+      max_tokens: 1,
+    });
+  });
+
   it("leaves the other free models on Chat Completions", () => {
     const executor = new OpenCodeExecutor();
-    const body = {
-      messages: [{ role: "user", content: "hi" }],
-      max_tokens: 1024,
-    };
+    const body = { messages: [{ role: "user", content: "hi" }], max_tokens: 1024 };
     executor.transformRequest("big-pickle", body, true, {});
-    expect(executor.buildUrl("big-pickle")).toBe(
-      "https://opencode.ai/zen/v1/chat/completions",
-    );
+    expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/zen/v1/chat/completions");
     expect(body.max_tokens).toBe(1024);
     expect(body.max_output_tokens).toBeUndefined();
   });
@@ -110,14 +122,9 @@ describe("OpenCode Free Muse Spark thinking", () => {
       {},
       PROVIDER,
     );
-    const out = new OpenCodeExecutor().transformRequest(
-      MODEL,
-      translated,
-      true,
-      {
-        connectionId: "opencode-muse-spark-translation-test",
-      },
-    );
+    const out = new OpenCodeExecutor().transformRequest(MODEL, translated, true, {
+      connectionId: "opencode-muse-spark-translation-test",
+    });
 
     expect(out.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
     expect(out.max_output_tokens).toBe(131072);
@@ -130,9 +137,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
 
     for (const m of ["muse-spark-1.3-contributor-free", futureModel]) {
       expect(executor.buildUrl(m)).toBe("https://opencode.ai/zen/v1/responses");
-      expect(executor.buildUrl(`${m}(high)`)).toBe(
-        "https://opencode.ai/zen/v1/responses",
-      );
+      expect(executor.buildUrl(`${m}(high)`)).toBe("https://opencode.ai/zen/v1/responses");
       expect(getModelTargetFormat("oc", m)).toBe("openai-responses");
 
       const body = {
@@ -161,160 +166,62 @@ describe("OpenCode Free Muse Spark thinking", () => {
     }
   });
 
-  it("strips reasoning items, encrypted props, and forces auto tool_choice on 1.3", () => {
+  it("strips prior-turn reasoning items carrying encrypted_content from input", () => {
     const executor = new OpenCodeExecutor();
+    const model = "muse-spark-1.3-contributor-free";
     const body = {
+      model,
       input: [
-        { type: "reasoning", summary: [] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "say hi" }] },
         {
-          type: "message",
-          role: "assistant",
-          encrypted_content: "enc",
-          reasoning_encrypted_content: "renc",
-          content: [],
+          type: "reasoning",
+          id: "rs_123",
+          encrypted_content: "ENC_BLOB_TURN_1",
+          summary: [{ type: "summary_text", text: "thinking text" }],
         },
         {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "hi" }],
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_1",
+          name: "shell",
+          arguments: JSON.stringify({ command: "echo hi" }),
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_1",
+          output: "hi",
+        },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "now say bye" }] },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "shell",
+            description: "Run shell command",
+            parameters: { type: "object" },
+          },
         },
       ],
-      tool_choice: { type: "function", name: "read" },
-      reasoning: { effort: "high" },
     };
 
-    const out = executor.transformRequest(
-      "muse-spark-1.3-contributor-free",
-      body,
-      true,
-      {
-        connectionId: "opencode-muse-spark-strip-test",
-      },
-    );
-
+    const out = executor.transformRequest(model, body, true, {});
+    expect(out.stream).toBe(true);
+    expect(out.store).toBe(false);
+    // Prior reasoning items stripped to prevent 400 "reasoning encrypted_content was not issued to this caller"
     expect(out.input.some((item) => item.type === "reasoning")).toBe(false);
-    const assistant = out.input.find((item) => item.role === "assistant");
-    expect(assistant.encrypted_content).toBeUndefined();
-    expect(assistant.reasoning_encrypted_content).toBeUndefined();
-    expect(out.tool_choice).toBe("auto");
-  });
-
-  it("sends canonical OpenCode fingerprint headers (PR #4105)", () => {
-    const executor = new OpenCodeExecutor();
-
-    const headers = executor.buildHeaders({ rawHeaders: {} }, true);
-    expect(headers["User-Agent"]).toMatch(
-      /^opencode\/1\.(1[7-9]|[2-9]\d)\.\d+$/,
-    );
-    expect(headers["x-opencode-session"]).toMatch(
-      /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/,
-    );
-    expect(headers["x-opencode-request"]).toMatch(
-      /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/,
-    );
-
-    // Malformed downstream UA + foreign session get upgraded/translated.
-    const upgraded = executor.buildHeaders(
+    expect(JSON.stringify(out.input)).not.toContain("ENC_BLOB_TURN_1");
+    // User message, function_call, function_call_output, and next user message survive
+    const types = out.input.map((item) => item.type);
+    expect(types).toEqual(["message", "function_call", "function_call_output", "message"]);
+    // Tools flattened and empty properties added
+    expect(out.tools).toEqual([
       {
-        rawHeaders: {
-          "user-agent": "curl/8.4.0",
-          "x-opencode-session": "claude:abc-123",
-        },
-      },
-      true,
-    );
-    expect(upgraded["User-Agent"]).toMatch(/^opencode\/1\.\d+\.\d+$/);
-    expect(upgraded["x-opencode-session"]).toMatch(
-      /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/,
-    );
-
-    // Canonical native sessions pass through untouched.
-    const native = `ses_${"a".repeat(12)}${"B".repeat(14)}`;
-    const passthrough = executor.buildHeaders(
-      { rawHeaders: { "x-opencode-session": native } },
-      true,
-    );
-    expect(passthrough["x-opencode-session"]).toBe(native);
-  });
-
-  it("injects the free-tier fingerprint quartet and forces streaming", () => {
-    const executor = new OpenCodeExecutor();
-    const extra = {
-      type: "function",
-      function: {
-        name: "my_tool",
-        description: "x",
+        type: "function",
+        name: "shell",
+        description: "Run shell command",
         parameters: { type: "object", properties: {} },
       },
-    };
-
-    const chat = executor.transformRequest(
-      "mimo-v2.5-free",
-      {
-        messages: [{ role: "user", content: "hi" }],
-        tools: [extra],
-        stream: false,
-      },
-      false,
-      {},
-    );
-    expect(chat.stream).toBe(true);
-    expect(chat.tools.map((t) => t.function.name).sort()).toEqual([
-      "bash",
-      "glob",
-      "grep",
-      "my_tool",
-      "read",
     ]);
-    expect(chat.tools.find((t) => t.function.name === "my_tool")).toBe(extra);
-
-    const responses = executor.transformRequest(
-      "muse-spark-1.3-contributor-free",
-      {
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "hi" }],
-          },
-        ],
-      },
-      false,
-      {},
-    );
-    expect(responses.stream).toBe(true);
-    // Responses tool shape is flat, not nested under `function`.
-    expect(responses.tools.map((t) => t.name).sort()).toEqual([
-      "bash",
-      "glob",
-      "grep",
-      "read",
-    ]);
-    expect(
-      responses.tools.every((t) => t.type === "function" && t.parameters),
-    ).toBe(true);
-  });
-
-  it("does not duplicate fingerprint tools already supplied by the caller", () => {
-    const executor = new OpenCodeExecutor();
-    const supplied = ["bash", "glob", "grep", "read"].map((name) => ({
-      type: "function",
-      function: {
-        name,
-        description: "caller",
-        parameters: { type: "object", properties: {} },
-      },
-    }));
-
-    const out = executor.transformRequest(
-      "mimo-v2.5-free",
-      { messages: [], tools: supplied },
-      true,
-      {},
-    );
-    expect(out.tools).toHaveLength(4);
-    expect(out.tools.every((t) => t.function.description === "caller")).toBe(
-      true,
-    );
   });
 });

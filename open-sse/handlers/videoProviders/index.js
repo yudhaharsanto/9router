@@ -6,12 +6,7 @@
 import openrouter from "./openrouter.js";
 import vertex from "./vertex.js";
 
-const ADAPTERS = {
-  openrouter,
-  // InferHub speaks the same collection-root shape (POST {base}, GET {base}/{id}/{suffix}).
-  inferhub: openrouter,
-  vertex,
-};
+const ADAPTERS = { openrouter, vertex };
 
 export function getVideoAdapter(provider) {
   return ADAPTERS[provider] || null;

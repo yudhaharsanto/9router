@@ -776,8 +776,35 @@ function formatLogDate(date = new Date()) {
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// No-op: request log is now derived from usageHistory table on read.
-export async function appendRequestLog() {}
+/**
+ * Persist a request that ended WITHOUT usable token counts.
+ *
+ * The request log is read back out of usageHistory, so while this was a no-op any
+ * stream that never reached its usage tail (client disconnect, upstream error,
+ * missing terminal sentinel) left no trace whatsoever: no history row, no daily
+ * request count — as far as the dashboard was concerned the request never happened.
+ *
+ * The write goes through saveRequestUsage so it shares its transaction (history
+ * insert + daily rollup + lifetime counter). That function already skips entries
+ * with zero tokens, and saveUsageStats() early-returns on zero tokens as well, so
+ * exactly one row is produced per request on either path. PENDING is skipped here:
+ * it is not terminal and its own completion records the real usage.
+ */
+export async function appendRequestLog(entry = {}) {
+  try {
+    const status = entry?.status;
+    if (!status || status === "PENDING") return;
+
+    const t = entry.tokens || {};
+    const hasTokens = (t.prompt_tokens || t.input_tokens || 0) > 0
+      || (t.completion_tokens || t.output_tokens || 0) > 0;
+    if (hasTokens) return; // real usage — saveUsageStats/saveRequestUsage owns that row
+
+    await saveRequestUsage({ ...entry, tokens: {}, status });
+  } catch (e) {
+    console.error("[usageRepo] appendRequestLog failed:", e?.message || e);
+  }
+}
 
 export async function getRecentLogs(limit = 200) {
   try {

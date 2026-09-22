@@ -14,6 +14,14 @@ export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
 // sharedEncoder is stateless — safe to share across streams
 const sharedEncoder = new TextEncoder();
 
+// Last-resort accounting: how long a stream may keep producing output without ever
+// reaching flush() or a [DONE]/terminal sentinel before it is force-finalized.
+// Without this such a stream records nothing at all — no usage row, and the request
+// detail stays a permanent "[Streaming in progress...]" placeholder. Re-armed on
+// every chunk, so a healthy stream never reaches it. unref() so it cannot hold the
+// process open.
+const FINALIZE_IDLE_MS = 10 * 60 * 1000;
+
 /**
  * Stream modes
  */
@@ -77,12 +85,14 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let finalized = false;
+  let backstopTimer = null;
 
   // Usage/logging tail, callable from transform() as well as flush(): a client that
   // closes right after the terminal event cancels the reader, and flush() never runs.
   const finalizeStream = () => {
     if (finalized) return;
     finalized = true;
+    clearBackstop();
 
     const isPassthrough = mode === STREAM_MODE.PASSTHROUGH;
     let finalUsage = isPassthrough ? usage : state?.usage;
@@ -106,9 +116,29 @@ export function createSSEStream(options = {}) {
     }
   };
 
-  return new TransformStream({
+  // Backstop + handle used by paths outside this closure. flush() and the terminal
+  // sentinels are the only normal triggers for finalizeStream(); a client that
+  // disconnects (or an upstream abort) can end the request before either runs, and
+  // without a fallback that request would never be accounted for.
+  const armBackstop = () => {
+    if (finalized) return;
+    if (backstopTimer) clearTimeout(backstopTimer);
+    backstopTimer = setTimeout(() => {
+      backstopTimer = null;
+      if (finalized) return;
+      dbg("STREAM", `finalize backstop: ${FINALIZE_IDLE_MS}ms with no terminal | content=${totalContentLength}B`);
+      finalizeStream();
+    }, FINALIZE_IDLE_MS);
+    backstopTimer.unref?.();
+  };
+  const clearBackstop = () => {
+    if (backstopTimer) { clearTimeout(backstopTimer); backstopTimer = null; }
+  };
+
+  const transformStream = new TransformStream({
     transform(chunk, controller) {
       if (!ttftAt) ttftAt = Date.now();
+      armBackstop();
       const text = decoder.decode(chunk, { stream: true });
       buffer += text;
       reqLogger?.appendProviderChunk?.(text);
@@ -486,6 +516,11 @@ export function createSSEStream(options = {}) {
       }
     }
   });
+
+  // Expose the idempotent finalizer so streamHandler can invoke it from
+  // disconnect/abort paths that never reach flush() or a terminal sentinel.
+  transformStream.finalizeStream = finalizeStream;
+  return transformStream;
 }
 
 export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {

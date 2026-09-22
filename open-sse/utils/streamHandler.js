@@ -104,6 +104,13 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
 
+  // The SSE finalizer normally runs from flush() or a terminal sentinel. Every exit
+  // below can end the request before either happens (client closed, reader errored),
+  // so usage must still be recorded. Idempotent — repeated calls are no-ops.
+  const finalize = () => {
+    try { transformStream.finalizeStream?.(); } catch { /* best-effort usage tail */ }
+  };
+
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
     if (terminalEmitted || !onAbortTerminal) return;
@@ -117,6 +124,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   return new ReadableStream({
     async pull(controller) {
       if (!streamController.isConnected()) {
+        finalize();
         emitTerminal(controller);
         controller.close();
         return;
@@ -137,6 +145,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         const msg0 = error?.message || "";
         const isControllerClosed = msg0.includes("already closed") || msg0.includes("Invalid state");
         if (!isControllerClosed) streamController.handleError(error);
+        finalize();
         reader.cancel().catch(() => {});
         writer.abort().catch(() => {});
 
@@ -169,6 +178,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
     },
 
     cancel(reason) {
+      finalize();
       streamController.handleDisconnect(reason || "cancelled");
       reader.cancel();
       writer.abort();
@@ -209,9 +219,20 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
       stallTimer = null;
       abortMessage = "stream stall timeout";
       dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
+      // Deliberately the raw controller below (the timer already cleared itself), so
+      // the usage finalizer has to be invoked explicitly here too.
+      finalize();
       streamController.handleError?.(new Error("stream stall timeout"));
       streamController.abort?.();
     }, stallTimeoutMs);
+  };
+
+  // Record usage on every termination path. finalizeStream lives inside the SSE
+  // transform closure and normally only runs from flush() or a terminal sentinel;
+  // a client disconnect, upstream error or stall abort can end the request first,
+  // in which case nothing would be written at all. Idempotent, so always safe.
+  const finalize = () => {
+    try { transformStream.finalizeStream?.(); } catch { /* best-effort usage tail */ }
   };
 
   // Wrap controller so every termination path clears the stall timer.
@@ -221,10 +242,10 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     signal: streamController.signal,
     startTime: streamController.startTime,
     isConnected: () => streamController.isConnected(),
-    handleComplete: () => { dbg(tag, `complete | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); streamController.handleComplete(); },
-    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); streamController.handleError(e); },
-    handleDisconnect: (r) => { dbg(tag, `disconnect: ${r} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); streamController.handleDisconnect(r); },
-    abort: () => { clearStall(); streamController.abort(); }
+    handleComplete: () => { dbg(tag, `complete | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); finalize(); streamController.handleComplete(); },
+    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); finalize(); streamController.handleError(e); },
+    handleDisconnect: (r) => { dbg(tag, `disconnect: ${r} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearStall(); finalize(); streamController.handleDisconnect(r); },
+    abort: () => { clearStall(); finalize(); streamController.abort(); }
   };
 
   armStall();
@@ -252,7 +273,7 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     .pipeThrough(transformStream);
 
   return createDisconnectAwareStream(
-    { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
+    { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) }, finalizeStream: finalize },
     wrappedController,
     onAbortTerminal ? () => onAbortTerminal(abortMessage) : null
   );

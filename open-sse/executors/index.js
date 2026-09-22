@@ -3,6 +3,7 @@ import { AzureExecutor } from "./azure.js";
 import { GeminiCLIExecutor } from "./gemini-cli.js";
 import { GithubExecutor } from "./github.js";
 import { IFlowExecutor } from "./iflow.js";
+import { InferHubExecutor } from "./inferhub.js";
 import { QoderExecutor } from "./qoder.js";
 import { KiroExecutor } from "./kiro.js";
 import { KimchiExecutor } from "./kimchi.js";
@@ -34,6 +35,7 @@ const executors = {
   "gemini-cli": new GeminiCLIExecutor(),
   github: new GithubExecutor(),
   iflow: new IFlowExecutor(),
+  inferhub: new InferHubExecutor(),
   qoder: new QoderExecutor(),
   kiro: new KiroExecutor(),
   kimchi: new KimchiExecutor(),
@@ -83,6 +85,7 @@ export { AzureExecutor } from "./azure.js";
 export { GeminiCLIExecutor } from "./gemini-cli.js";
 export { GithubExecutor } from "./github.js";
 export { IFlowExecutor } from "./iflow.js";
+export { InferHubExecutor } from "./inferhub.js";
 export { QoderExecutor } from "./qoder.js";
 export { KiroExecutor } from "./kiro.js";
 export { KimchiExecutor } from "./kimchi.js";

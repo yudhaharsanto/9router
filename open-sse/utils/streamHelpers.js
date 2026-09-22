@@ -40,13 +40,21 @@ export function parseSSELine(line, format = null) {
 // Check if chunk has valuable content (not empty)
 export function hasValuableContent(chunk, format) {
   // OpenAI format
-  if (format === FORMATS.OPENAI && chunk.choices?.[0]?.delta) {
-    const delta = chunk.choices[0].delta;
-    return delta.content && delta.content !== "" ||
-           delta.reasoning_content && delta.reasoning_content !== "" ||
-           delta.tool_calls && delta.tool_calls.length > 0 ||
-           chunk.choices[0].finish_reason ||
-           delta.role;
+  if (format === FORMATS.OPENAI) {
+    // Final usage chunk carries `usage` with empty choices (InferHub documents
+    // exactly this shape). Keep it so extractUsage sees the token counts.
+    const u = chunk.usage;
+    if (u && typeof u === "object" && (u.prompt_tokens !== undefined || u.completion_tokens !== undefined || u.input_tokens !== undefined || u.output_tokens !== undefined)) {
+      return true;
+    }
+    if (chunk.choices?.[0]?.delta) {
+      const delta = chunk.choices[0].delta;
+      return delta.content && delta.content !== "" ||
+             delta.reasoning_content && delta.reasoning_content !== "" ||
+             delta.tool_calls && delta.tool_calls.length > 0 ||
+             chunk.choices[0].finish_reason ||
+             delta.role;
+    }
   }
 
   // Claude format

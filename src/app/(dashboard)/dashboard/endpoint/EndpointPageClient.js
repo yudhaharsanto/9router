@@ -954,8 +954,14 @@ export default function APIPageClient({ machineId }) {
   };
 
   // Per-key model allow-list helpers
+  // "Active" means the connection's toggle is on — same rule as
+  // MitmPageClient.getActiveProviders(). testStatus is deliberately not part of
+  // it: /dashboard/providers counts a connection as Connected while testStatus
+  // is "unavailable" and the models are not in cooldown, so requiring
+  // testStatus === "active" here would drop live providers (inferhub, mistral,
+  // kimchi, commandcode, gnrt, opencode-go) out of the modal entirely.
   const activeProviders = providerConnections.filter(
-    (c) => c.isActive !== false && c.testStatus === "active",
+    (c) => c.isActive !== false,
   );
   const currentSelectedModels =
     modelSelectTarget === "edit" ? editLimitModels : newKeyModels;

@@ -270,6 +270,23 @@ export default function ModelSelectModal({
     [],
   );
 
+  // Every model prefix a switched-on connection can answer as: the raw provider
+  // id, its registry alias (getProviderAlias), the connection's display prefix
+  // and the provider node's own prefix. Used when activeOnly is set to keep the
+  // "Custom models" group and the combo list limited to active providers.
+  const activeProviderKeys = useMemo(() => {
+    const keys = new Set();
+    for (const p of activeProviders) {
+      if (!p?.provider) continue;
+      keys.add(p.provider);
+      keys.add(getProviderAlias(p.provider));
+      const node = providerNodes.find((n) => n.id === p.provider);
+      const prefix = p.providerSpecificData?.prefix || node?.prefix;
+      if (prefix) keys.add(prefix);
+    }
+    return keys;
+  }, [activeProviders, providerNodes]);
+
   // Group models by provider with priority order
   const groupedModels = useMemo(() => {
     const groups = {};
@@ -667,7 +684,10 @@ export default function ModelSelectModal({
 
     // Optional: always-on "Custom models" group (registered custom models +
     // custom aliases), independent of which providers are connected. Used by
-    // the API-key alias picker so custom models are always selectable.
+    // the API-key alias picker so custom models are always selectable. When
+    // activeOnly is set the group is additionally restricted to entries owned by
+    // an active provider — otherwise it would re-expose models from providers
+    // whose toggle is off, which is exactly what activeOnly is meant to hide.
     if (alwaysShowCustom) {
       const existingValues = new Set();
       Object.values(groups).forEach((g) =>
@@ -679,6 +699,9 @@ export default function ModelSelectModal({
       for (const m of customModels) {
         if (kindFilter && m.type && m.type !== kindFilter) continue;
         if (!kindFilter && m.type && m.type !== "llm") continue;
+        // activeOnly: skip models registered against a switched-off provider —
+        // the group used to dump every entry regardless of who owns it.
+        if (activeOnly && !activeProviderKeys.has(m.providerAlias)) continue;
         const value = `${m.providerAlias}/${m.id}`;
         if (existingValues.has(value)) continue;
         existingValues.add(value);
@@ -692,6 +715,7 @@ export default function ModelSelectModal({
       // Custom aliases (alias name → full model)
       for (const [aliasName, fullModel] of Object.entries(modelAliases)) {
         const value = String(fullModel);
+        if (activeOnly && !activeProviderKeys.has(value.split("/")[0])) continue;
         if (existingValues.has(value)) continue;
         existingValues.add(value);
         customEntries.push({
@@ -736,6 +760,7 @@ export default function ModelSelectModal({
     kindFilter,
     activeProviders,
     alwaysShowCustom,
+    activeProviderKeys,
     liveModels,
     cursorModels,
     clineModels,
@@ -746,10 +771,22 @@ export default function ModelSelectModal({
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
     if (kindFilter || capFilter) return [];
-    if (!searchQuery.trim()) return combos;
+    // activeOnly: only offer a combo when every model it routes to belongs to a
+    // provider that is switched on — picking one backed by a dead provider
+    // would fail upstream. A combo with no models at all is never useful.
+    const eligible = activeOnly
+      ? combos.filter((c) => {
+          const models = c.models || [];
+          return (
+            models.length > 0 &&
+            models.every((m) => activeProviderKeys.has(String(m).split("/")[0]))
+          );
+        })
+      : combos;
+    if (!searchQuery.trim()) return eligible;
     const query = searchQuery.toLowerCase();
-    return combos.filter((c) => c.name.toLowerCase().includes(query));
-  }, [combos, searchQuery, kindFilter]);
+    return eligible.filter((c) => c.name.toLowerCase().includes(query));
+  }, [combos, searchQuery, kindFilter, activeOnly, activeProviderKeys]);
 
   // Sort models alphabetically, with added models floated to top
   const sortModels = (models) => {

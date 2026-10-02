@@ -23,16 +23,13 @@ import {
   resolveClineModels,
   resolveClinepassModels,
 } from "open-sse/services/clinepassModels.js";
+import codexProvider from "open-sse/providers/registry/codex.js";
 
 const GEMINI_CLI_MODELS_URL =
   "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
-// The /codex/models endpoint gates each entry by minimal_client_version against this
-// value, and codex CLI's own manifest (openai/codex codex-rs/models-manager/models.json)
-// already requires 0.144.0 for its newest models, so a stale client_version here comes
-// back 200 with those entries quietly missing instead of erroring.
-const CODEX_CLIENT_VERSION = "0.144.6";
-const CODEX_MODELS_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`;
+// Model discovery must identify as the same Codex CLI version as inference.
+const CODEX_MODELS_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${codexProvider.transport.cliVersion}`;
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -150,6 +147,14 @@ const buildOAuthResolver =
 
 // Provider models endpoints configuration
 const PROVIDER_MODELS_CONFIG = {
+  "muse": {
+    url: "https://api.meta.ai/v1/models",
+    method: "GET",
+    headers: { "Content-Type": "application/json", "x-api-version": "1.0.0" },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => data.data || [],
+  },
   claude: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -297,6 +302,12 @@ const PROVIDER_MODELS_CONFIG = {
   "vercel-ai-gateway": createOpenAIModelsConfig(
     "https://ai-gateway.vercel.sh/v1/models",
   ),
+  // OpenAI-compatible aggregators (upstream).
+  tokenharbor: createOpenAIModelsConfig("https://tokenharbor.ai/v1/models"),
+  dahl: createOpenAIModelsConfig("https://inference.dahl.global/v1/models"),
+  atria: createOpenAIModelsConfig("https://api.atria-asi.ai/v1/models"),
+  agnes: createOpenAIModelsConfig("https://apihub.agnes-ai.com/v1/models"),
+  bai: createOpenAIModelsConfig("https://api.b.ai/v1/models"),
   inferhub: createOpenAIModelsConfig("https://api.inferhub.dev/v1/models"),
   gnrt: createOpenAIModelsConfig("https://api.gnrt.dev/v1/models"),
   kimchi: {
@@ -502,6 +513,39 @@ const PROVIDER_MODELS_CONFIG = {
         );
       }
       return { models: [], warning };
+    },
+  },
+  // Qoder CN shares the intl resolver shape with region-correct endpoint via provider id.
+  "qoder-cn": {
+    customResolver: async (connection) => {
+      const credentials = {
+        provider: "qoder-cn",
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+        refreshToken: connection.refreshToken,
+        email: connection.email,
+        displayName: connection.displayName,
+        providerSpecificData: connection.providerSpecificData || {},
+      };
+      try {
+        const result = await resolveQoderModels(credentials, { forceRefresh: true });
+        if (result?.models?.length) {
+          return {
+            models: result.models.map((m) => ({
+              id: `qoder-cn/${m.id}`,
+              name: m.name,
+              contextLength: m.contextLength,
+              isVL: m.isVL,
+              isReasoning: m.isReasoning,
+              maxOutputTokens: m.maxOutputTokens,
+              description: m.description,
+            })),
+          };
+        }
+      } catch (error) {
+        console.log("Failed to fetch Qoder CN models, falling back to static:", error.message);
+      }
+      return { models: [], warning: "Qoder CN returned no models; falling back to static catalog." };
     },
   },
   "gemini-cli": {

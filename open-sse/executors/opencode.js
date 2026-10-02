@@ -6,6 +6,7 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
+import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import {
   normalizeResponsesInput,
@@ -22,73 +23,7 @@ const SESSION_FIELD = "_opencodeSession";
 const REQ_FIELD = "_opencodeRequest";
 export const OPENCODE_SESSION_RE = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
 export const OPENCODE_REQUEST_RE = /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
-const BASE62_CHARS =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-// OpenCode free tier requires both 'bash' and 'read' in tools payload.
-// Injected as cloaked decoy tools so external CLI tools (e.g. Claude Code's Bash/Read)
-// take precedence while satisfying upstream verification.
-const OPENCODE_DECOY_CHAT_TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "bash",
-      description: "This tool is currently unavailable and must not be used.",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "read",
-      description: "This tool is currently unavailable and must not be used.",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-];
-
-const OPENCODE_DECOY_RESPONSES_TOOLS = [
-  {
-    type: "function",
-    name: "bash",
-    description: "This tool is currently unavailable and must not be used.",
-    parameters: { type: "object", properties: {} },
-  },
-  {
-    type: "function",
-    name: "read",
-    description: "This tool is currently unavailable and must not be used.",
-    parameters: { type: "object", properties: {} },
-  },
-];
-
-function cloakOpencodeTools(body, isResponses) {
-  if (!body || typeof body !== "object") return;
-  if (isResponses) {
-    if (!Array.isArray(body.tools)) body.tools = [];
-    const names = new Set(body.tools.map((t) => t.name || t.function?.name));
-    for (const tool of OPENCODE_DECOY_RESPONSES_TOOLS) {
-      if (!names.has(tool.name)) body.tools.push({ ...tool });
-    }
-    if (!body.tool_choice) body.tool_choice = "auto";
-  } else {
-    const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
-    if (!hasTools) {
-      body.tools = OPENCODE_DECOY_CHAT_TOOLS.map((t) => ({
-        ...t,
-        function: { ...t.function },
-      }));
-      if (!body.tool_choice) body.tool_choice = "none";
-    } else {
-      const names = new Set(body.tools.map((t) => t.function?.name || t.name));
-      for (const tool of OPENCODE_DECOY_CHAT_TOOLS) {
-        if (!names.has(tool.function.name)) {
-          body.tools.push({ ...tool, function: { ...tool.function } });
-        }
-      }
-    }
-  }
-}
+const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 function hasValidOpencodeVersion(ua) {
   const m = String(ua || "").match(/opencode\/(\d+)\.(\d+)(?:\.(\d+))?/i);
@@ -128,7 +63,7 @@ export function generateSessionId(timestamp = Date.now()) {
   const time = Array.from({ length: 6 }, (_, index) =>
     Number((value >> BigInt(40 - 8 * index)) & 0xffn)
       .toString(16)
-      .padStart(2, "0"),
+      .padStart(2, "0")
   ).join("");
   return `ses_${time}${unstableRandom()}`;
 }
@@ -139,16 +74,13 @@ export function generateRequestId(timestamp = Date.now()) {
   const time = Array.from({ length: 6 }, (_, index) =>
     Number((value >> BigInt(40 - 8 * index)) & 0xffn)
       .toString(16)
-      .padStart(2, "0"),
+      .padStart(2, "0")
   ).join("");
   return `msg_${time}${unstableRandom()}`;
 }
 
 export function translateSessionId(sessionId, clientTool = "") {
-  if (
-    typeof sessionId === "string" &&
-    OPENCODE_SESSION_RE.test(sessionId.trim())
-  ) {
+  if (typeof sessionId === "string" && OPENCODE_SESSION_RE.test(sessionId.trim())) {
     return sessionId.trim();
   }
   const digest = crypto
@@ -201,21 +133,11 @@ if (stableSessionCleanup.unref) stableSessionCleanup.unref();
 
 function identityKey(credentials) {
   const connectionId = credentials?.connectionId || credentials?.id;
-  if (connectionId)
-    return `opencode:conn:${String(connectionId).slice(0, 128)}`;
+  if (connectionId) return `opencode:conn:${String(connectionId).slice(0, 128)}`;
   const raw = credentials?.rawHeaders || {};
-  const auth =
-    raw.authorization ||
-    raw.Authorization ||
-    raw["x-api-key"] ||
-    raw["X-Api-Key"] ||
-    "";
+  const auth = raw.authorization || raw.Authorization || raw["x-api-key"] || raw["X-Api-Key"] || "";
   if (auth) {
-    const digest = crypto
-      .createHash("sha256")
-      .update(String(auth))
-      .digest("hex")
-      .slice(0, 32);
+    const digest = crypto.createHash("sha256").update(String(auth)).digest("hex").slice(0, 32);
     return `opencode:auth:${digest}`;
   }
   return "opencode:default";
@@ -246,22 +168,16 @@ function lastUserText(body) {
       : Array.isArray(body.input)
         ? body.input
         : null;
-    if (!arr)
-      return typeof body.input === "string" ? body.input.slice(-600) : "";
+    if (!arr) return typeof body.input === "string" ? body.input.slice(-600) : "";
     for (let i = arr.length - 1; i >= 0; i--) {
       const msg = arr[i];
       if (!msg) continue;
       if (msg.role && msg.role !== "user") continue;
       const content = msg.content;
-      if (typeof content === "string" && content.trim())
-        return content.trim().slice(-600);
+      if (typeof content === "string" && content.trim()) return content.trim().slice(-600);
       if (Array.isArray(content)) {
         const text = content
-          .map((part) =>
-            typeof part === "string"
-              ? part
-              : part?.text || part?.input_text || "",
-          )
+          .map((part) => (typeof part === "string" ? part : part?.text || part?.input_text || ""))
           .join(" ")
           .trim();
         if (text) return text.slice(-600);
@@ -302,27 +218,11 @@ function normalizeRequestId(value) {
 function bodyHasSessionHints(body) {
   try {
     if (!body || typeof body !== "object") return false;
-    if (typeof body.session_id === "string" && body.session_id.trim())
-      return true;
-    if (typeof body.conversation_id === "string" && body.conversation_id.trim())
-      return true;
-    if (
-      typeof body.prompt_cache_key === "string" &&
-      body.prompt_cache_key.trim()
-    )
-      return true;
-    if (
-      body.metadata &&
-      typeof body.metadata.user_id === "string" &&
-      body.metadata.user_id.trim()
-    )
-      return true;
-    if (
-      body.request &&
-      body.request.sessionId != null &&
-      String(body.request.sessionId) !== ""
-    )
-      return true;
+    if (typeof body.session_id === "string" && body.session_id.trim()) return true;
+    if (typeof body.conversation_id === "string" && body.conversation_id.trim()) return true;
+    if (typeof body.prompt_cache_key === "string" && body.prompt_cache_key.trim()) return true;
+    if (body.metadata && typeof body.metadata.user_id === "string" && body.metadata.user_id.trim()) return true;
+    if (body.request && body.request.sessionId != null && String(body.request.sessionId) !== "") return true;
     const arr = Array.isArray(body.messages)
       ? body.messages
       : Array.isArray(body.input)
@@ -335,8 +235,7 @@ function bodyHasSessionHints(body) {
           const content = msg.content;
           if (typeof content === "string") assistantText += content;
           else if (Array.isArray(content)) {
-            for (const part of content)
-              assistantText += part?.text || part?.output || "";
+            for (const part of content) assistantText += part?.text || part?.output || "";
           }
           if (assistantText.length >= 50) return true;
         }
@@ -350,9 +249,7 @@ function bodyHasSessionHints(body) {
 
 // Strip the thinking suffix "model(level)" so registry lookups hit the base id.
 function baseModelId(model) {
-  return String(model || "")
-    .replace(/\([^()]+\)\s*$/, "")
-    .trim();
+  return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
 }
 
 function isResponsesModel(model) {
@@ -364,12 +261,7 @@ function isMessagesModel(model) {
   return MESSAGES_MODELS.has(baseModelId(model));
 }
 
-function resolveOpencodeSession(
-  body,
-  credentials,
-  providerSessionId,
-  clientTool,
-) {
+function resolveOpencodeSession(body, credentials, providerSessionId, clientTool) {
   const headers = credentials?.rawHeaders || {};
   const native = nativeSession(headers);
   if (native) return native;
@@ -420,38 +312,15 @@ function normalizeResponsesTools(body) {
   const validNames = new Set();
   body.tools = body.tools.filter((tool) => {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
-    const fn =
-      tool.function &&
-      typeof tool.function === "object" &&
-      !Array.isArray(tool.function)
-        ? tool.function
-        : null;
-    const rawName =
-      typeof tool.name === "string"
-        ? tool.name
-        : typeof fn?.name === "string"
-          ? fn.name
-          : "";
+    const fn = tool.function && typeof tool.function === "object" && !Array.isArray(tool.function) ? tool.function : null;
+    const rawName = typeof tool.name === "string" ? tool.name : (typeof fn?.name === "string" ? fn.name : "");
     const name = rawName.trim();
     if (!name) return false;
-    const description =
-      typeof tool.description === "string"
-        ? tool.description
-        : typeof fn?.description === "string"
-          ? fn.description
-          : "";
-    let parameters =
-      tool.parameters &&
-      typeof tool.parameters === "object" &&
-      !Array.isArray(tool.parameters)
-        ? tool.parameters
-        : fn?.parameters &&
-            typeof fn.parameters === "object" &&
-            !Array.isArray(fn.parameters)
-          ? fn.parameters
-          : { type: "object", properties: {} };
-    if (parameters.type === "object" && !parameters.properties)
-      parameters = { ...parameters, properties: {} };
+    const description = typeof tool.description === "string" ? tool.description : (typeof fn?.description === "string" ? fn.description : "");
+    let parameters = (tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters))
+      ? tool.parameters
+      : (fn?.parameters && typeof fn.parameters === "object" && !Array.isArray(fn.parameters) ? fn.parameters : { type: "object", properties: {} });
+    if (parameters.type === "object" && !parameters.properties) parameters = { ...parameters, properties: {} };
     for (const k of Object.keys(tool)) delete tool[k];
     tool.type = "function";
     tool.name = name.slice(0, MAX_TOOL_NAME_LEN);
@@ -460,16 +329,9 @@ function normalizeResponsesTools(body) {
     validNames.add(tool.name);
     return true;
   });
-  if (
-    body.tool_choice &&
-    typeof body.tool_choice === "object" &&
-    !Array.isArray(body.tool_choice)
-  ) {
+  if (body.tool_choice && typeof body.tool_choice === "object" && !Array.isArray(body.tool_choice)) {
     if (body.tool_choice.type === "function") {
-      const n =
-        typeof body.tool_choice.name === "string"
-          ? body.tool_choice.name.trim()
-          : "";
+      const n = typeof body.tool_choice.name === "string" ? body.tool_choice.name.trim() : "";
       if (!n || !validNames.has(n)) delete body.tool_choice;
     }
   }
@@ -493,12 +355,7 @@ function sanitizeResponsesItems(body) {
     delete item.encrypted_content;
     delete item.reasoning_encrypted_content;
     if (item.type === "function_call") {
-      if (
-        !item.name ||
-        typeof item.name !== "string" ||
-        item.name.trim() === ""
-      )
-        return false;
+      if (!item.name || typeof item.name !== "string" || item.name.trim() === "") return false;
       item.name = item.name.trim().slice(0, MAX_TOOL_NAME_LEN);
       item.call_id = clampResponsesCallId(item.call_id);
       item.arguments = coerceResponsesArguments(item.arguments);
@@ -515,24 +372,18 @@ function sanitizeResponsesItems(body) {
 
 function normalizeOpencodeReasoning(model, body) {
   const current = body.reasoning;
-  const currentReasoning =
-    current && typeof current === "object" && !Array.isArray(current)
-      ? current
-      : null;
-  const requestedEffort =
-    typeof body.reasoning_effort === "string"
-      ? body.reasoning_effort
-      : currentReasoning?.effort;
+  const currentReasoning = current && typeof current === "object" && !Array.isArray(current)
+    ? current
+    : null;
+  const requestedEffort = typeof body.reasoning_effort === "string"
+    ? body.reasoning_effort
+    : currentReasoning?.effort;
   if (typeof requestedEffort !== "string") return;
 
   const cleanModel = baseModelId(model || body.model);
   const supportedLevels = getThinkingLevels("opencode", cleanModel);
   let effort = requestedEffort.toLowerCase().trim();
-  if (
-    (effort === "max" || effort === "ultra") &&
-    supportedLevels?.length &&
-    !supportedLevels.includes(effort)
-  ) {
+  if ((effort === "max" || effort === "ultra") && supportedLevels?.length && !supportedLevels.includes(effort)) {
     if (effort === "ultra" && supportedLevels.includes("max")) effort = "max";
     else if (supportedLevels.includes("xhigh")) effort = "xhigh";
   }
@@ -547,19 +398,9 @@ export class OpenCodeExecutor extends BaseExecutor {
     super("opencode", PROVIDERS.opencode);
   }
 
-  prepareRequestCredentials({
-    body,
-    credentials,
-    providerSessionId,
-    clientTool,
-  } = {}) {
+  prepareRequestCredentials({ body, credentials, providerSessionId, clientTool } = {}) {
     const sourceCredentials = credentials || {};
-    const session = resolveOpencodeSession(
-      body,
-      sourceCredentials,
-      providerSessionId,
-      clientTool,
-    );
+    const session = resolveOpencodeSession(body, sourceCredentials, providerSessionId, clientTool);
 
     return {
       ...sourceCredentials,
@@ -569,43 +410,26 @@ export class OpenCodeExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    if (body && typeof body === "object" && model && !body.model)
-      body.model = model;
+    if (body && typeof body === "object" && model && !body.model) body.model = model;
     // Zen rejects non-streaming requests on free models with 403 FreeTierError;
     // always stream upstream and let the handler layer aggregate for non-stream clients.
     if (body && typeof body === "object") body.stream = true;
-    if (
-      isResponsesModel(model || body?.model) &&
-      body &&
-      typeof body === "object"
-    ) {
+    if (isResponsesModel(model || body?.model) && body && typeof body === "object") {
       // ponytail: chỉ model đã xác nhận auto-only; mở allowlist khi có bằng chứng.
-      // Free tier menuntut tool_choice "auto" — set bila absent, demote bila lain.
-      if (
-        this.config.quirks?.forceAutoToolChoiceModels?.includes(
-          baseModelId(model),
-        )
-      ) {
+      if ("tool_choice" in body && body.tool_choice !== "auto"
+        && this.config.quirks?.forceAutoToolChoiceModels?.includes(baseModelId(model))) {
         body.tool_choice = "auto";
       }
       const normalized = normalizeResponsesInput(body.input);
       if (normalized) body.input = normalized;
       if (!Array.isArray(body.input) || body.input.length === 0) {
-        body.input = [
-          {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "..." }],
-          },
-        ];
+        body.input = [{ type: "message", role: "user", content: [{ type: "input_text", text: "..." }] }];
       }
       // Responses API names the output cap max_output_tokens and takes thinking
       // as reasoning:{effort,summary} — normalize the Chat fields at this boundary.
       if (body.max_output_tokens === undefined) {
-        if (body.max_completion_tokens !== undefined)
-          body.max_output_tokens = body.max_completion_tokens;
-        else if (body.max_tokens !== undefined)
-          body.max_output_tokens = body.max_tokens;
+        if (body.max_completion_tokens !== undefined) body.max_output_tokens = body.max_completion_tokens;
+        else if (body.max_tokens !== undefined) body.max_output_tokens = body.max_tokens;
       }
       delete body.max_tokens;
       delete body.max_completion_tokens;
@@ -614,20 +438,18 @@ export class OpenCodeExecutor extends BaseExecutor {
       body.store = false;
       normalizeResponsesTools(body);
       sanitizeResponsesItems(body);
-      // Free tier gates on both 'bash' and 'read' being present in the tools
-      // payload; cloak on every request, not just empty ones (PR #4165).
-      cloakOpencodeTools(body, true);
+      // Free-tier fingerprint tools are required even when an agent client
+      // already supplied tools. ZCode/Claude Code requests normally have
+      // non-empty tool arrays; skipping cloaking here triggers 403 FreeTierError.
+      applyFingerprintTools(body, true);
     } else if (body && typeof body === "object") {
-      cloakOpencodeTools(body, false);
+      applyFingerprintTools(body, false);
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 
   async execute(args) {
-    return super.execute({
-      ...args,
-      credentials: this.prepareRequestCredentials(args),
-    });
+    return super.execute({ ...args, credentials: this.prepareRequestCredentials(args) });
   }
 
   buildUrl(model) {
@@ -645,25 +467,21 @@ export class OpenCodeExecutor extends BaseExecutor {
     const downstreamUa = lower["user-agent"] || "";
     const isOpencodeDownstream = hasValidOpencodeVersion(downstreamUa);
 
-    const session =
-      credentials?.[SESSION_FIELD] ||
-      this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
+    const session = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
     const downstreamReq = normalizeRequestId(lower["x-opencode-request"]);
-    const requestId =
-      credentials?.[REQ_FIELD] || downstreamReq || generateRequestId();
+    const requestId = credentials?.[REQ_FIELD] || downstreamReq || generateRequestId();
 
     const headers = {
       "Content-Type": "application/json",
-      Authorization: "Bearer public",
+      "Authorization": "Bearer public",
       "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
       "x-opencode-client": lower["x-opencode-client"] || "desktop",
       "x-opencode-session": session,
       "x-opencode-request": requestId,
       "x-opencode-project": lower["x-opencode-project"] || "global",
-      Accept: stream ? "text/event-stream" : "*/*",
+      "Accept": stream ? "text/event-stream" : "*/*",
     };
-    if (url.endsWith("/messages"))
-      headers["anthropic-version"] = ANTHROPIC_API_VERSION;
+    if (url.endsWith("/messages")) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
     return headers;
   }
 }

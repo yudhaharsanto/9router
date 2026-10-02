@@ -327,7 +327,10 @@ export async function GET(request, { params }) {
         "codebuddy-cn",
         "codebuddy-intl",
         "qoder",
+        "qoder-cn",
         "grok-cli",
+        "muse",
+        "glm",
         "autoclaw",
       ];
       let deviceData;
@@ -387,7 +390,7 @@ export async function POST(request, { params }) {
       if (provider === "trae") ok = registerTraeSession({ state });
       else if (provider === "windsurf") ok = registerWindsurfSession({ state });
       else if (provider === "zed")
-        ok = registerZedSession({ state, codeVerifier: body?.codeVerifier });
+        ok = registerZedSession({ state, codeVerifier: body?.codeVerifier, systemId: body?.systemId });
       else
         return NextResponse.json(
           { error: "register-session only supported for trae/windsurf/zed" },
@@ -397,7 +400,7 @@ export async function POST(request, { params }) {
     }
 
     if (action === "exchange") {
-      const { code, redirectUri, codeVerifier, state, meta } = body;
+      const { code, redirectUri, codeVerifier, state, meta, systemId } = body;
 
       // Xiaomi MiMo: no token exchange needed — the callback already decrypted the sk.
       // Just read the session result and create the connection.
@@ -566,14 +569,19 @@ export async function POST(request, { params }) {
         );
       }
 
-      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl)
+      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl).
+      // systemId (Zed) is merged into meta so the login attempt's own id is
+      // used instead of a freshly prepared one. Ignored by other providers.
       const tokenData = await exchangeTokens(
         provider,
         code,
         redirectUri,
         codeVerifier,
         state,
-        meta,
+        {
+          ...(meta || {}),
+          ...(systemId ? { systemId } : {}),
+        },
       );
 
       // Save to database
@@ -617,6 +625,7 @@ export async function POST(request, { params }) {
         "codebuddy-cn",
         "codebuddy-intl",
         "autoclaw",
+        "glm",
       ];
       let result;
       if (noPkceProviders.includes(provider)) {
@@ -625,7 +634,7 @@ export async function POST(request, { params }) {
       } else if (provider === "kiro") {
         // Kiro needs extraData (clientId, clientSecret) from device code response
         result = await pollForToken(provider, deviceCode, null, extraData);
-      } else if (provider === "qoder") {
+      } else if (provider === "qoder" || provider === "qoder-cn") {
         // Qoder needs both the PKCE verifier (codeVerifier) and the machineId
         // captured at device-code time (extraData._qoderMachineId) so
         // mapTokens can persist it for COSY signing.
@@ -687,6 +696,8 @@ export async function POST(request, { params }) {
         error: result.error,
         errorDescription: result.errorDescription,
         pending: isPending,
+        // fatal: unrecoverable (e.g. post-exchange failure) — client must stop polling and show it
+        ...(result.fatal ? { fatal: true } : {}),
       });
     }
 

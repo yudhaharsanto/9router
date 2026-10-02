@@ -114,6 +114,9 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
   },
   "codebuddy-cn": { tokenExists: true },
+  // codebuddy-intl uses the same JWT token structure as codebuddy-cn
+  // (Authorization: Bearer <jwt>, no refresh) — tokenExists only (#4232).
+  "codebuddy-intl": { tokenExists: true },
   kimchi: {
     url:
       KIMCHI_CONFIG.validationUrl ||

@@ -509,10 +509,10 @@ export default function ModelSelectModal({
     activeProviders,
     alwaysShowCustom,
     activeProviderKeys,
-    liveModels,
     cursorModels,
     clineModels,
     clinepassModels,
+    zedModels,
     activeOnly,
   ]);
 

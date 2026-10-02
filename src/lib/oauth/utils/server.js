@@ -435,6 +435,162 @@ export function stopXaiProxy() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────
+// AutoClaw dynamic-port proxy. AutoClaw's OAuth accepts any localhost
+// navigate_uri (the desktop app itself builds its callback URI from the
+// actual local port), so we bind a random free port to avoid clashing with
+// the AutoClaw desktop token server on 18432.
+// ───────────────────────────────────────────────────────────────────────────
+
+let autoclawProxyServer = null;
+let autoclawProxyTimeout = null;
+let autoclawProxyPort = null;
+const AUTOCLOW_PROXY_TIMEOUT_MS = 300000; // 5 minutes
+const AUTOCLOW_CALLBACK_PATHS = new Set([
+  "/auth/callback-google",
+  "/auth/callback-zai",
+]);
+
+// Sessions keyed by device_code (= AutoClaw's API state). Each session holds
+// { deviceId, status, code, state, error, createdAt }.
+const autoclawSessions = new Map();
+
+export function registerAutoClawSession(
+  deviceCode,
+  deviceId,
+  authMethod = "google",
+  navigateUri = null,
+) {
+  if (!deviceCode || !deviceId) return false;
+  autoclawSessions.set(deviceCode, {
+    deviceId,
+    authMethod,
+    navigateUri,
+    status: "pending",
+    createdAt: Date.now(),
+  });
+  return true;
+}
+
+export function getAutoClawSessionStatus(deviceCode) {
+  return autoclawSessions.get(deviceCode) || null;
+}
+
+export function handleAutoClawCallback(url) {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const errorParam = url.searchParams.get("error");
+  const session = state ? autoclawSessions.get(state) : null;
+
+  if (!session) return { success: false, error: "OAuth session not found" };
+  if (errorParam) {
+    session.status = "error";
+    session.error = url.searchParams.get("error_description") || errorParam;
+    return { success: false, error: session.error };
+  }
+  if (!code) {
+    session.status = "error";
+    session.error = "No authorization code received";
+    return { success: false, error: session.error };
+  }
+
+  session.status = "exchanging";
+  session.code = code;
+  return { success: true };
+}
+
+export function clearAutoClawSession(deviceCode) {
+  autoclawSessions.delete(deviceCode);
+}
+
+export function startAutoClawProxy() {
+  return new Promise((resolve) => {
+    if (autoclawProxyServer) {
+      resolve({ success: true, port: autoclawProxyPort });
+      return;
+    }
+
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, "http://localhost");
+      console.log(
+        `[autoclaw-proxy] incoming ${req.method} ${url.pathname}${url.search.slice(0, 100)} from ${req.socket.remoteAddress}`,
+      );
+
+      if (!AUTOCLOW_CALLBACK_PATHS.has(url.pathname)) {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const errorParam = url.searchParams.get("error");
+
+      // Match session by state (= device_code = AutoClaw's API state).
+      const session = state ? autoclawSessions.get(state) : null;
+
+      if (session) {
+        if (errorParam) {
+          session.status = "error";
+          session.error =
+            url.searchParams.get("error_description") || errorParam;
+        } else if (code) {
+          session.status = "exchanging";
+          session.code = code;
+        } else {
+          session.status = "error";
+          session.error = "No authorization code received";
+        }
+      }
+
+      // Render result page to browser.
+      const success = !errorParam && !!code;
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderCodexResultPage(
+          success,
+          success
+            ? "You can close this window."
+            : errorParam || "No code received",
+        ),
+      );
+
+      // Keep proxy alive for a bit in case of re-render; poll loop will stop it.
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      autoclawProxyServer = server;
+      autoclawProxyPort = server.address().port;
+      autoclawProxyTimeout = setTimeout(
+        () => stopAutoClawProxy(),
+        AUTOCLOW_PROXY_TIMEOUT_MS,
+      );
+      console.log(
+        `[autoclaw-proxy] listening on 127.0.0.1:${autoclawProxyPort}${[...AUTOCLOW_CALLBACK_PATHS].join(", ")}`,
+      );
+      resolve({ success: true, port: autoclawProxyPort });
+    });
+
+    server.on("error", (err) => {
+      console.log(`[autoclaw-proxy] listen error: ${err.code} ${err.message}`);
+      resolve({ success: false, reason: err.message });
+    });
+  });
+}
+
+export function stopAutoClawProxy() {
+  if (autoclawProxyTimeout) {
+    clearTimeout(autoclawProxyTimeout);
+    autoclawProxyTimeout = null;
+  }
+  if (autoclawProxyServer) {
+    autoclawProxyServer.close();
+    autoclawProxyServer = null;
+  }
+  autoclawProxyPort = null;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Trae dynamic-port proxy. Singleton session (one connect at a time per provider).
 // Callback path = /callback with params refreshToken + loginHost.
 // ───────────────────────────────────────────────────────────────────────────

@@ -14,6 +14,9 @@ function fmtMoney(micros) {
   return `${sign}$${abs.toFixed(digits)}`;
 }
 
+// Rates are USD per 1M tokens.
+const fmtRate = (v) => `$${(Number(v) || 0).toFixed(2)}`;
+
 const COLUMNS = [
   { field: "name", label: "Customer" },
   { field: "status", label: "Status" },
@@ -68,14 +71,18 @@ export default function CustomersPage() {
   const [reconBusy, setReconBusy] = useState(false);
   const [settings, setSettings] = useState({ discountRate: 0.5, minMarginPct: 0, marginBehavior: "skip", idrPerUsd: "", takoUsername: "" });
   const [settingsSaved, setSettingsSaved] = useState(false);
+  // Read-only view of what customers are billed: official catalog price × (1 − discountRate).
+  const [pricing, setPricing] = useState(null);
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [cRes, sRes] = await Promise.all([
+        const [cRes, sRes, pRes] = await Promise.all([
           fetch("/api/admin/customers", { cache: "no-store" }),
           fetch("/api/settings", { cache: "no-store" }),
+          fetch("/api/pricing", { cache: "no-store" }),
         ]);
         if (!cRes.ok) throw new Error(`customers: HTTP ${cRes.status}`);
         const body = await cRes.json();
@@ -92,6 +99,7 @@ export default function CustomersPage() {
             });
           }
         }
+        if (pRes.ok && !cancelled) setPricing(await pRes.json());
       } catch (e) {
         if (!cancelled) setError(String(e?.message || e));
       }
@@ -152,6 +160,9 @@ export default function CustomersPage() {
       setReconBusy(false);
     }
   };
+
+  // Sell factor = 1 − discountRate, applied to official rates for the sell column.
+  const sellFactor = 1 - (Number(settings.discountRate) || 0);
 
   const saveSettings = async () => {
     setSettingsSaved(false);
@@ -317,6 +328,67 @@ export default function CustomersPage() {
           </button>
           {settingsSaved && <span className="text-sm text-green-600">Saved</span>}
         </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
+          <div>
+            <h3 className="font-semibold">Customer Sell Pricing</h3>
+            <p className="text-xs text-text-muted">
+              What customers are billed: official price × (1 − discount). Edit official rates via{" "}
+              <a href="/dashboard/settings/pricing" className="text-primary hover:underline">Model Pricing</a>.
+            </p>
+          </div>
+          <button
+            onClick={() => setPricingOpen((v) => !v)}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-subtle"
+          >
+            {pricingOpen ? "Hide" : "Show"}
+          </button>
+        </div>
+        {pricingOpen && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
+                <tr>
+                  <th className="px-6 py-3">Model</th>
+                  <th className="px-6 py-3 text-right">Input (official / sell)</th>
+                  <th className="px-6 py-3 text-right">Output (official / sell)</th>
+                  <th className="px-6 py-3 text-right">Cached (official / sell)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {!pricing || Object.keys(pricing).length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
+                      No pricing data.
+                    </td>
+                  </tr>
+                ) : (
+                  Object.entries(pricing).flatMap(([provider, models]) =>
+                    Object.entries(models || {}).filter(([, p]) => p && typeof p === "object").map(([model, p]) => (
+                      <tr key={`${provider}/${model}`} className="hover:bg-bg-subtle/20 transition-colors">
+                        <td className="px-6 py-2.5">
+                          <div className="font-medium">{model}</div>
+                          <div className="text-xs text-text-muted">{provider}</div>
+                        </td>
+                        <td className="px-6 py-2.5 text-right font-mono text-xs">
+                          {fmtRate(p.input)} / {fmtRate((p.input ?? 0) * sellFactor)}
+                        </td>
+                        <td className="px-6 py-2.5 text-right font-mono text-xs">
+                          {fmtRate(p.output)} / {fmtRate((p.output ?? 0) * sellFactor)}
+                        </td>
+                        <td className="px-6 py-2.5 text-right font-mono text-xs">
+                          {fmtRate(p.cached ?? p.input)} / {fmtRate((p.cached ?? p.input ?? 0) * sellFactor)}
+                        </td>
+                      </tr>
+                    ))
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       <Card className="overflow-hidden">

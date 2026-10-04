@@ -14,6 +14,8 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { isCustomerKey, authorizeCustomerRequest, holdForRequest } from "@/lib/billing/customerGate.js";
+import { evaluateMarginPolicy } from "@/lib/billing/marginGuard.js";
+import { releaseHold } from "@/lib/billing/customerGate.js";
 import { resolvePublicModelRequest } from "@/lib/billing/publicModelMap.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -80,6 +82,7 @@ export async function handleChat(request, clientRawRequest = null) {
   // path: they authorize against the customer ledger and hold a balance
   // reserve before any upstream call. Insufficient balance → 402, no fallback.
   let customerBilling = null;
+  let publicModelName = null;
   if (isCustomerKey(apiKey)) {
     const auth = await authorizeCustomerRequest(apiKey);
     if (!auth) {
@@ -90,6 +93,20 @@ export async function handleChat(request, clientRawRequest = null) {
     if (!hold.ok) {
       log.warn("AUTH", `Insufficient balance for customer ${auth.customerId}`);
       return errorResponse(HTTP_STATUS.PAYMENT_REQUIRED, "Insufficient balance. Please top up.");
+    }
+    // Margin guard (spec §3.10): check before any upstream call. Public-name
+    // requests resolve to combos below, where per-member pricing differs —
+    // those skip the guard here (combo members are checked at dispatch).
+    const publicModel = await resolvePublicModelRequest(modelStr);
+    if (publicModel) publicModelName = publicModel.publicName;
+    if (!publicModel) {
+      const verdict = await evaluateMarginPolicy("openai", modelStr, body);
+      if (verdict.blocked) {
+        await releaseHold(auth.customerId, hold.holdRefId);
+        log.warn("AUTH", `Margin guard blocked request (model ${modelStr})`);
+        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Model temporarily unavailable.");
+      }
+      if (verdict.unsafe) log.warn("MARGIN", `Margin-unsafe request (model ${modelStr}) — proceeding per policy`);
     }
     customerBilling = auth;
     customerBilling.holdRefId = hold.holdRefId;
@@ -155,18 +172,17 @@ export async function handleChat(request, clientRawRequest = null) {
   // Public model mapping (phase 6): a customer-facing public name resolves to
   // its combo members here; the public name rides customerBilling for
   // response masking. Falls through to normal combo/name resolution otherwise.
-  let publicModelName = null;
-  const publicResolved = await resolvePublicModelRequest(modelStr);
+  // Check if model is a combo (has multiple models with fallback). A public
+  // name resolved in the gate block above wins; its members are the combo.
+  const publicResolved = publicModelName ? await resolvePublicModelRequest(modelStr) : null;
   if (publicResolved) {
     if (!customerBilling) {
       log.warn("CHAT", `Public model "${modelStr}" used without a customer key`);
       return errorResponse(HTTP_STATUS.FORBIDDEN, "This model requires a customer API key.");
     }
-    publicModelName = publicResolved.publicName;
-    customerBilling.publicName = publicModelName;
+    customerBilling.publicName = publicResolved.publicName;
   }
 
-  // Check if model is a combo (has multiple models with fallback)
   const comboModels = publicResolved ? publicResolved.models : await getComboModels(modelStr);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global

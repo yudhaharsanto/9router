@@ -43,6 +43,12 @@ const DEFAULT_SETTINGS = {
   idrPerUsd: "",
   // Customer sell price = official × (1 − discountRate). 0.5 = half price.
   discountRate: 0.5,
+  // Margin guard (spec §3.10): request unsafe when estimated upstream cost >
+  // sell estimate × (1 − minMarginPct). "skip" warns, "block" returns 503.
+  minMarginPct: 0,
+  marginBehavior: "skip",
+  // Floor per settled request in micro-USD (0 = charge exact usage).
+  minimumChargeMicros: 0,
   samlEntryPoint: "",
   samlIssuer: "urn:9router:sp",
   samlCert: "",

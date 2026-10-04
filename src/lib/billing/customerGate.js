@@ -46,12 +46,32 @@ export async function holdForRequest(customerId, body) {
 
 // Settle actual usage against the request's hold. Unknown/unpriced models
 // charge 0 but still release the hold — pricing gaps must not strand a
-// customer's balance. Units: integer micro-USD.
+// customer's balance. Units: integer micro-USD. Ledger meta records the
+// margin breakdown (charge vs official upstream cost) for reconciliation.
 export async function settleCustomerUsage(customerId, holdRefId, provider, model, tokens) {
   const { settleUsage } = await import("@/lib/db/repos/ledgerRepo.js");
+  const { getPricingForModel } = await import("@/lib/db/repos/pricingRepo.js");
+  const { getSettings } = await import("@/lib/db/repos/settingsRepo.js");
+  const settings = await getSettings();
   const pricing = await getSellPricing(provider, model);
-  const usageMicros = pricing ? estimateCostMicros(tokens, pricing) : 0;
-  return settleUsage(customerId, holdRefId, usageMicros, { provider, model });
+  let chargeMicros = pricing ? estimateCostMicros(tokens, pricing) : 0;
+  const minCharge = Math.max(0, Math.round(Number(settings.minimumChargeMicros) || 0));
+  if (chargeMicros > 0 && chargeMicros < minCharge) chargeMicros = minCharge;
+  const official = await getPricingForModel(provider, model);
+  const officialCostMicros = official ? estimateCostMicros(tokens, official) : 0;
+  const result = await settleUsage(customerId, holdRefId, chargeMicros, {
+    provider, model,
+    chargeMicros,
+    officialCostMicros,
+    marginMicros: chargeMicros - officialCostMicros,
+  });
+  return { ...result, chargeMicros, officialCostMicros, marginMicros: chargeMicros - officialCostMicros };
+}
+
+// Release a request's hold without charging (margin-blocked requests, etc.).
+export async function releaseHold(customerId, holdRefId) {
+  const { settleUsage } = await import("@/lib/db/repos/ledgerRepo.js");
+  return settleUsage(customerId, holdRefId, 0, { released: "no-charge" });
 }
 
 // Fail-open settle hook for the chatCore response handlers: billing must never

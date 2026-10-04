@@ -14,6 +14,27 @@ export async function resolvePublicModelRequest(modelStr) {
   return { models: combo.models, comboId: pub.comboId, publicName: pub.publicName };
 }
 
+// Reverse map for the customer portal: an upstream model name (combo member,
+// e.g. "combo/glm-flash") → the enabled public name exposing it. Unlike
+// resolvePublicModelRequest this must accept "/" — usage rows store upstream
+// names. First enabled public model wins (a model exposed by two public names
+// is a config smell; portal shows one row either way).
+export async function resolvePublicModelName(upstreamModel) {
+  if (!upstreamModel || typeof upstreamModel !== "string") return null;
+  const models = await listPublicModels({ enabledOnly: true });
+  for (const m of models) {
+    const combo = await getComboById(m.comboId);
+    for (const member of combo?.models || []) {
+      // Members are provider-prefixed ("ih/combo/glm-flash"); usage rows store
+      // the bare model ("combo/glm-flash"). Compare both forms.
+      if (member === upstreamModel || member.slice(member.indexOf("/") + 1) === upstreamModel) {
+        return m.publicName;
+      }
+    }
+  }
+  return null;
+}
+
 // [OI]-format catalog limited to enabled public models. Only publicName is
 // ever serialized — comboId stays server-side.
 export async function customerModelsList() {

@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/auth/customerSession.js";
 import { getAdapter } from "@/lib/db/driver.js";
 import { getActiveKeyForCustomer } from "@/lib/db/repos/customerKeysRepo.js";
+import { resolvePublicModelName } from "@/lib/billing/publicModelMap.js";
+import { listPublicModels } from "@/lib/db/repos/publicModelsRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -51,15 +53,29 @@ export async function GET(request) {
     [startDate ? startDate.toISOString() : null]
   );
   const keyHash = active.keyHash;
+  // Published-model view: usageHistory records the upstream model name (combo
+  // members etc.), but the customer only knows public names. Map each distinct
+  // model to its published public name; rows whose model belongs to no enabled
+  // public combo are dropped so internal model names never surface. When the
+  // admin has published nothing, rows pass through unmapped rather than
+  // blanking the whole history.
+  const modelMap = new Map();
+  const publishedAnything = (await listPublicModels({ enabledOnly: true })).length > 0;
+  if (publishedAnything) {
+    for (const model of new Set(rows.map((r) => r.model).filter(Boolean))) {
+      const pub = await resolvePublicModelName(model);
+      modelMap.set(model, pub || null);
+    }
+  }
   const items = rows
     // Rows written without a presented key (admin/panel traffic) have NULL
     // apiKey and can never match a customer key — skip instead of crashing.
-    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash)
+    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash && (!publishedAnything || modelMap.get(r.model)))
     .slice(0, 100)
     .map((r) => ({
       timestamp: r.timestamp,
       provider: r.provider,
-      model: r.model,
+      model: modelMap.get(r.model) || r.model,
       promptTokens: r.promptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
       cost: r.cost,

@@ -127,6 +127,28 @@ describe("GET /api/customer/usage", () => {
     expect(body.totals.savedMicros).toBe(20);
   });
 
+  it("maps upstream model names to public names and drops unpublished rows", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-pub" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: "glm-combo", kind: "fallback", models: ["ih/combo/glm-flash"] });
+    await upsertPublicModel({ publicName: "glm-5.3-flash", comboId: combo.id, enabled: true });
+
+    // Published member → rewritten to the public name.
+    await db.saveRequestUsage({ provider: "inferhub", model: "combo/glm-flash", tokens: { prompt_tokens: 5, completion_tokens: 5 }, apiKey: key });
+    // Not a member of any published combo → must not appear.
+    await db.saveRequestUsage({ provider: "antigravity", model: "gemini-3.6-flash-low", tokens: { prompt_tokens: 9, completion_tokens: 9 }, apiKey: key });
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage", token))).json();
+    expect(body.items.length).toBe(1);
+    expect(body.items[0].model).toBe("glm-5.3-flash");
+    expect(JSON.stringify(body.items)).not.toContain("combo/glm-flash");
+    expect(JSON.stringify(body.items)).not.toContain("gemini-3.6-flash-low");
+  });
+
   it("saved floors at 0 when charged exceeds official estimate", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "usg-over" });
     await db.createCustomerKey(c.id);

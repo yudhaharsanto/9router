@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -161,6 +161,142 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
     ],
+  },
+
+  // ── Customer billing (phase 1) ─────────────────────────────────────────
+  // Money is integer micro-USD (µ$ = USD × 1e6). IDR is integer rupiah.
+  // FX rate is integer milli-IDR-per-USD (rate × 1000).
+  customers: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      googleSub: "TEXT UNIQUE NOT NULL",
+      email: "TEXT",
+      name: "TEXT",
+      // "active" | "disabled"
+      status: "TEXT NOT NULL DEFAULT 'active'",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_cust_email ON customers(email)"],
+  },
+  customerKeys: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      customerId: "TEXT NOT NULL",
+      // HMAC-SHA256(API_KEY_SECRET, plaintext). Plaintext never stored.
+      keyHash: "TEXT UNIQUE NOT NULL",
+      // Display form: "sk-cust-…last4". Never the plaintext.
+      keyMask: "TEXT NOT NULL",
+      // RFC3339 timestamp when revoked; NULL = active.
+      revokedAt: "TEXT",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ck_customer ON customerKeys(customerId)",
+      "CREATE INDEX IF NOT EXISTS idx_ck_active ON customerKeys(customerId, revokedAt)",
+    ],
+  },
+  customerBalances: {
+    columns: {
+      customerId: "TEXT PRIMARY KEY",
+      // Total owned µ$ (credits − debits). May go negative only via settle overdraft.
+      balanceMicros: "INTEGER NOT NULL DEFAULT 0",
+      // µ$ currently held by in-flight requests.
+      reservedMicros: "INTEGER NOT NULL DEFAULT 0",
+      updatedAt: "TEXT NOT NULL",
+    },
+  },
+  ledger: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      customerId: "TEXT NOT NULL",
+      // topup_credit | usage_debit | reserve_hold | reserve_release | adjustment
+      type: "TEXT NOT NULL",
+      // Signed effect on balanceMicros (reserves are 0 — they move reservedMicros only).
+      amountMicros: "INTEGER NOT NULL",
+      // Snapshot of balanceMicros after this entry (reserve rows: unchanged balance).
+      balanceAfterMicros: "INTEGER NOT NULL",
+      refType: "TEXT",
+      refId: "TEXT",
+      meta: "TEXT",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_ref ON ledger(refType, refId, type)",
+      "CREATE INDEX IF NOT EXISTS idx_ledger_customer ON ledger(customerId, createdAt)",
+    ],
+  },
+  topups: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      customerId: "TEXT NOT NULL",
+      // Tako transaction id; NULL until callback/paymentUrl known. UNIQUE = idempotency anchor.
+      takoTxnId: "TEXT UNIQUE",
+      amountIdr: "INTEGER NOT NULL",
+      // FX rate snapshot at creation: milli-IDR per USD (rate × 1000).
+      rateMilli: "INTEGER NOT NULL",
+      creditedMicros: "INTEGER",
+      // pending | paid | failed
+      status: "TEXT NOT NULL DEFAULT 'pending'",
+      paymentUrl: "TEXT",
+      paidAt: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_topup_customer ON topups(customerId, createdAt)",
+      "CREATE INDEX IF NOT EXISTS idx_topup_status ON topups(status)",
+    ],
+  },
+  webhookEvents: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      // "tako" for now.
+      source: "TEXT NOT NULL",
+      // Provider transaction/event id. Duplicate delivery → INSERT ignored.
+      externalId: "TEXT NOT NULL",
+      payload: "TEXT NOT NULL",
+      // unprocessed | processed | failed
+      status: "TEXT NOT NULL DEFAULT 'unprocessed'",
+      processError: "TEXT",
+      processedAt: "TEXT",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_we_source_ext ON webhookEvents(source, externalId)",
+      "CREATE INDEX IF NOT EXISTS idx_we_status ON webhookEvents(status)",
+    ],
+  },
+  pricingVersions: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      modelId: "TEXT NOT NULL",
+      // Official per-1M-token prices in µ$.
+      officialInputMicros: "INTEGER NOT NULL",
+      officialOutputMicros: "INTEGER NOT NULL",
+      // Discount in basis points (5000 = 50%).
+      discountBps: "INTEGER NOT NULL DEFAULT 5000",
+      // Derived: round(official × (10000 − discountBps) / 10000).
+      sellInputMicros: "INTEGER NOT NULL",
+      sellOutputMicros: "INTEGER NOT NULL",
+      // ISO date from which this version is active.
+      effectiveFrom: "TEXT NOT NULL",
+      source: "TEXT",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_pv_model ON pricingVersions(modelId, effectiveFrom)",
+    ],
+  },
+  publicModels: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      publicName: "TEXT UNIQUE NOT NULL",
+      comboId: "TEXT NOT NULL",
+      enabled: "INTEGER NOT NULL DEFAULT 1",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
   },
 };
 

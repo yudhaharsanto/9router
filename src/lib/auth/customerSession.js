@@ -21,7 +21,11 @@ function loadJwtSecret() {
   return generated;
 }
 
-const SECRET = new TextEncoder().encode(loadJwtSecret());
+// Derive a customer-specific signing key from the shared JWT secret so a
+// customer token can never verify as a dashboard token (or vice versa).
+const SECRET = new TextEncoder().encode(
+  crypto.createHmac("sha256", loadJwtSecret()).update("crx-customer-session-v1").digest("hex")
+);
 
 export function shouldUseSecureCookie(request) {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";

@@ -34,4 +34,18 @@ describe("customerSession", () => {
     const noCookie = new Request("http://localhost:20128/api/customer/me");
     expect(await requireCustomerSession(noCookie)).toBeNull();
   });
+
+  it("customer token must NOT verify as a dashboard token (separate signing key)", async () => {
+    const { createCustomerAuthToken } = await import("@/lib/auth/customerSession.js");
+    const { verifyDashboardAuthToken } = await import("@/lib/auth/dashboardSession.js");
+    const token = await createCustomerAuthToken({ customerId: "c-123" });
+    expect(await verifyDashboardAuthToken(token)).toBe(false);
+  });
+
+  it("admin token must NOT be accepted by getCustomerSession even with derived key", async () => {
+    const { createDashboardAuthToken } = await import("@/lib/auth/dashboardSession.js");
+    const { getCustomerSession } = await import("@/lib/auth/customerSession.js");
+    const adminToken = await createDashboardAuthToken();
+    expect(await getCustomerSession(adminToken)).toBeNull();
+  });
 });

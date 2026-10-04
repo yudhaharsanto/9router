@@ -491,7 +491,7 @@ Create `tests/unit/customer-provision.test.js`:
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;

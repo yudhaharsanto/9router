@@ -36,6 +36,11 @@ const DEFAULT_SETTINGS = {
   oidcLoginLabel: "Sign in with OIDC",
   googleOAuthClientId: "",
   googleOAuthClientSecret: "",
+  // Customer billing (phase 4): Tako top-up + FX rate.
+  takoUsername: "",
+  takoCallbackSecret: "",
+  // Daily FX snapshot: IDR per USD. Empty = top-up creation blocked (no guessing).
+  idrPerUsd: "",
   samlEntryPoint: "",
   samlIssuer: "urn:9router:sp",
   samlCert: "",

@@ -100,6 +100,19 @@ describe("ledgerRepo — holds and settle", () => {
     expect(next.ok).toBe(false);
   });
 
+  it("settleUsage refuses a hold belonging to another customer", async () => {
+    const a = await db.getOrCreateCustomer({ googleSub: "led-12" });
+    const b = await db.getOrCreateCustomer({ googleSub: "led-13" });
+    await db.creditCustomer(a.id, USD(10), { refType: "topup", refId: "t-12" });
+    await db.creditCustomer(b.id, USD(10), { refType: "topup", refId: "t-13" });
+    await db.holdReserve(b.id, USD(2), "req-12-b");
+    await expect(db.settleUsage(a.id, "req-12-b", USD(1))).rejects.toThrow(/No reserve_hold/);
+    // B untouched
+    const balB = await db.getBalance(b.id);
+    expect(balB.reservedMicros).toBe(USD(2));
+    expect(balB.balanceMicros).toBe(USD(10));
+  });
+
   it("100 parallel holds against a $1 balance hold exactly $1 total", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "led-8" });
     await db.creditCustomer(c.id, USD(1), { refType: "topup", refId: "t-8" });

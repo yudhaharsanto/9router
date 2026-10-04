@@ -103,8 +103,8 @@ export async function settleUsage(customerId, holdRefId, usageMicros, meta = {})
     const row = ensureBalanceRow(db, customerId);
     const current = toBalance(row);
     const hold = db.get(
-      `SELECT meta FROM ledger WHERE refType = 'request' AND refId = ? AND type = 'reserve_hold' LIMIT 1`,
-      [holdRefId]
+      `SELECT meta FROM ledger WHERE customerId = ? AND refType = 'request' AND refId = ? AND type = 'reserve_hold' LIMIT 1`,
+      [customerId, holdRefId]
     );
     if (!hold) throw new Error(`No reserve_hold found for refId ${holdRefId}`);
     const heldMicros = Number((JSON.parse(hold.meta || "{}")).heldMicros || 0);

@@ -52,7 +52,9 @@ export async function GET(request) {
   );
   const keyHash = active.keyHash;
   const items = rows
-    .filter((r) => hashKey(r.apiKey) === keyHash)
+    // Rows written without a presented key (admin/panel traffic) have NULL
+    // apiKey and can never match a customer key — skip instead of crashing.
+    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash)
     .slice(0, 100)
     .map((r) => ({
       timestamp: r.timestamp,

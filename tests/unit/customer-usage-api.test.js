@@ -89,6 +89,20 @@ describe("GET /api/customer/usage", () => {
     expect(body.items.length).toBe(1);
   });
 
+  it("skips usage rows with NULL apiKey instead of crashing (500)", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-null" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key });
+    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: null });
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const res = await mod.GET(req("/api/customer/usage", token));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items.length).toBe(1);
+  });
+
   it("totals expose official vs charged (ledger usage_debit) with saved = max(0, official − charged)", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "usg-totals" });
     const key = (await db.createCustomerKey(c.id)).key;

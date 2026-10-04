@@ -41,6 +41,8 @@ const DEFAULT_SETTINGS = {
   takoCallbackSecret: "",
   // Daily FX snapshot: IDR per USD. Empty = top-up creation blocked (no guessing).
   idrPerUsd: "",
+  // Customer sell price = official × (1 − discountRate). 0.5 = half price.
+  discountRate: 0.5,
   samlEntryPoint: "",
   samlIssuer: "urn:9router:sp",
   samlCert: "",

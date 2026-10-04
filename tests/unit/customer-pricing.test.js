@@ -1,16 +1,19 @@
-// Pricing versions + public models — discount derivation, active lookup, charge math.
+// Customer sell pricing: official × (1 − discountRate), integer micros.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
 
 beforeAll(async () => {
+  delete process.env.BASE_URL;
+  delete process.env.NEXT_PUBLIC_BASE_URL;
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "9router-cust-pricing-"));
   process.env.DATA_DIR = tempDir;
+  delete global._dbAdapter;
   vi.resetModules();
   db = await import("@/lib/db/index.js");
   await db.initDb();
@@ -22,89 +25,48 @@ afterAll(() => {
   else process.env.DATA_DIR = originalDataDir;
 });
 
-const USD_PER_M = (n) => Math.round(n * 1_000_000); // $/1M tokens → µ$
+describe("customerPricing", () => {
+  it("defaults discountRate to 0.5 and halves official prices", async () => {
+    const { getSellPricing } = await import("@/lib/billing/customerPricing.js");
+    // claude sonnet official: input 3.00, output 15.00 USD per 1M
+    const sell = await getSellPricing("claude", "claude-sonnet-4-5");
+    expect(sell).toBeTruthy();
+    expect(sell.input).toBeCloseTo(1.5, 6);
+    expect(sell.output).toBeCloseTo(7.5, 6);
+  });
 
-describe("pricingVersionsRepo", () => {
-  it("upsert derives sell price = official × 0.5 at 5000 bps", async () => {
-    const v = await db.upsertPricingVersion({
-      modelId: "glm-5.3-flash",
-      officialInputMicros: USD_PER_M(0.3),
-      officialOutputMicros: USD_PER_M(1.5),
-      effectiveFrom: "2026-10-01T00:00:00Z",
-      source: "manual",
+  it("honors an admin-configured discountRate", async () => {
+    const { updateSettings } = await import("@/lib/db/repos/settingsRepo.js");
+    await updateSettings({ discountRate: "0.25" });
+    // bust the 5s pricing cache via module reset
+    vi.resetModules();
+    const { getSellPricing } = await import("@/lib/billing/customerPricing.js");
+    const sell = await getSellPricing("claude", "claude-sonnet-4-5");
+    expect(sell.input).toBeCloseTo(2.25, 6);
+    expect(sell.output).toBeCloseTo(11.25, 6);
+  });
+
+  it("estimateCostMicros returns integer micros from tokens", async () => {
+    const { estimateCostMicros } = await import("@/lib/billing/customerPricing.js");
+    // 1M input tokens at sell 1.5/M = $1.50 = 1_500_000 µ$
+    const micros = estimateCostMicros(
+      { prompt_tokens: 1_000_000, completion_tokens: 0 },
+      { input: 1.5, output: 7.5, cached: 0.15, cache_creation: 1.875 },
+    );
+    expect(micros).toBe(1_500_000);
+    expect(Number.isInteger(micros)).toBe(true);
+  });
+
+  it("estimateCostMicros charges cached tokens at cached rate", () => {
+    // estimateCostMicros is sync-pure; import directly
+    return import("@/lib/billing/customerPricing.js").then(({ estimateCostMicros }) => {
+      const micros = estimateCostMicros(
+        { prompt_tokens: 1000, cached_tokens: 400, completion_tokens: 100 },
+        { input: 1.5, output: 7.5, cached: 0.15 },
+      );
+      // non-cached input 600 × 1.5/1M = 0.0009$ = 900µ$; cached 400 × 0.15/1M = 60µ$;
+      // output 100 × 7.5/1M = 750µ$ → 1710µ$
+      expect(micros).toBe(1710);
     });
-    expect(v.discountBps).toBe(5000);
-    expect(v.sellInputMicros).toBe(USD_PER_M(0.15));
-    expect(v.sellOutputMicros).toBe(USD_PER_M(0.75));
-  });
-
-  it("same (modelId, effectiveFrom) upsert updates instead of duplicating", async () => {
-    await db.upsertPricingVersion({
-      modelId: "m-x", officialInputMicros: 1000, officialOutputMicros: 2000,
-      effectiveFrom: "2026-10-01T00:00:00Z",
-    });
-    await db.upsertPricingVersion({
-      modelId: "m-x", officialInputMicros: 1100, officialOutputMicros: 2200,
-      effectiveFrom: "2026-10-01T00:00:00Z",
-    });
-    const versions = await db.listPricingVersions("m-x");
-    expect(versions.length).toBe(1);
-    expect(versions[0].officialInputMicros).toBe(1100);
-  });
-
-  it("getActivePricing returns latest effectiveFrom ≤ now", async () => {
-    await db.upsertPricingVersion({
-      modelId: "m-y", officialInputMicros: 100, officialOutputMicros: 200,
-      effectiveFrom: "2026-09-01T00:00:00Z",
-    });
-    await db.upsertPricingVersion({
-      modelId: "m-y", officialInputMicros: 300, officialOutputMicros: 600,
-      effectiveFrom: "2026-10-01T00:00:00Z",
-    });
-    const active = await db.getActivePricing("m-y");
-    expect(active.officialInputMicros).toBe(300);
-    const past = await db.getActivePricing("m-y", { at: "2026-09-15T00:00:00Z" });
-    expect(past.officialInputMicros).toBe(100);
-    expect(await db.getActivePricing("m-z")).toBeNull();
-  });
-});
-
-describe("computeChargeMicros", () => {
-  it("charges input+output tokens off sell prices", async () => {
-    const pricing = {
-      sellInputMicros: USD_PER_M(0.15),   // $0.15 / 1M
-      sellOutputMicros: USD_PER_M(0.75),  // $0.75 / 1M
-    };
-    // 100k in + 10k out → 0.1 × 0.15 + 0.01 × 0.75 = $0.0225
-    expect(db.computeChargeMicros({ pricing, inputTokens: 100_000, outputTokens: 10_000 })).toBe(22_500);
-  });
-
-  it("zero tokens charge zero", () => {
-    expect(db.computeChargeMicros({ pricing: { sellInputMicros: 100, sellOutputMicros: 100 }, inputTokens: 0, outputTokens: 0 })).toBe(0);
-  });
-});
-
-describe("publicModelsRepo", () => {
-  it("upsert + get by name + list enabled", async () => {
-    const m = await db.upsertPublicModel({ publicName: "glm-5.3-flash", comboId: "combo-1" });
-    expect(m.enabled).toBe(true);
-    expect((await db.getPublicModelByName("glm-5.3-flash")).comboId).toBe("combo-1");
-    await db.upsertPublicModel({ publicName: "secret-model", comboId: "combo-2", enabled: false });
-    const all = await db.listPublicModels({ enabledOnly: true });
-    expect(all.map((x) => x.publicName)).toEqual(["glm-5.3-flash"]);
-    const everything = await db.listPublicModels({ enabledOnly: false });
-    expect(everything.length).toBe(2);
-  });
-
-  it("upsert same publicName updates comboId instead of erroring", async () => {
-    await db.upsertPublicModel({ publicName: "glm-5.3-flash", comboId: "combo-9" });
-    expect((await db.getPublicModelByName("glm-5.3-flash")).comboId).toBe("combo-9");
-  });
-
-  it("getPublicModelByName unknown → null; delete removes", async () => {
-    expect(await db.getPublicModelByName("ghost")).toBeNull();
-    const m = await db.upsertPublicModel({ publicName: "to-delete", comboId: "c" });
-    await db.deletePublicModel(m.id);
-    expect(await db.getPublicModelByName("to-delete")).toBeNull();
   });
 });

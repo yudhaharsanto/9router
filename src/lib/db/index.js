@@ -68,6 +68,12 @@ export {
 export {
   recordWebhookEvent, markWebhookProcessed, getUnprocessedWebhookEvents,
 } from "./repos/webhookEventsRepo.js";
+export {
+  upsertPricingVersion, getActivePricing, listPricingVersions, computeChargeMicros,
+} from "./repos/pricingVersionsRepo.js";
+export {
+  upsertPublicModel, getPublicModelByName, listPublicModels, deletePublicModel,
+} from "./repos/publicModelsRepo.js";
 
 // Disabled models
 export {

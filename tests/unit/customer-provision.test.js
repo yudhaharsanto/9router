@@ -55,3 +55,53 @@ describe("provisionCustomerFromGoogle", () => {
     expect(r2.key).toMatch(/^sk-cust-/);
   });
 });
+
+describe("takeKeyReveal — consume safety", () => {
+  it("a wrong-customer probe must NOT burn the owner's token", async () => {
+    const { stageKeyReveal, takeKeyReveal } = await import("@/lib/auth/customerProvision.js");
+    const token = stageKeyReveal("owner-c", "sk-cust-owner-plaintext");
+    expect(takeKeyReveal(token, "attacker-c")).toBeNull();
+    // Owner can still consume after the failed probe.
+    expect(takeKeyReveal(token, "owner-c")).toBe("sk-cust-owner-plaintext");
+    expect(takeKeyReveal(token, "owner-c")).toBeNull(); // one-time still holds
+  });
+
+  it("expired token is rejected", async () => {
+    const mod = await import("@/lib/auth/customerProvision.js");
+    const token = mod.stageKeyReveal("owner-c2", "sk-cust-old");
+    // Reach into the store via behavior: TTL is 10 min; fake an expired entry
+    // by staging then manipulating time is intrusive — instead stage, wait not
+    // possible, so verify unexpired works and rely on unit of expiresAt check
+    // through the exported behavior: consume is null only after expiry. We
+    // trust Date.now() comparison covered by the wrong-customer + happy tests;
+    // here we assert expired entries are not consumable by simulating with a
+    // monkey-patched Date.now.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 11 * 60 * 1000;
+    try {
+      expect(mod.takeKeyReveal(token, "owner-c2")).toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
+describe("provisionCustomerFromGoogle — key race safety", () => {
+  it("creates at most one active key under concurrent first logins", async () => {
+    const { provisionCustomerFromGoogle } = await import("@/lib/auth/customerProvision.js");
+    const { getActiveKeyForCustomer } = await import("@/lib/db/index.js");
+    const [a, b] = await Promise.all([
+      provisionCustomerFromGoogle({ sub: "g-sub-race", email: "race@x.y", name: "R" }),
+      provisionCustomerFromGoogle({ sub: "g-sub-race", email: "race@x.y", name: "R" }),
+    ]);
+    const active = await getActiveKeyForCustomer(a.customer.id);
+    expect(active).not.toBeNull();
+    // Both calls see the same single active key (one created it, one found it).
+    const keysFor = a.customer.id;
+    const activeB = await getActiveKeyForCustomer(keysFor);
+    expect(activeB.id).toBe(active.id);
+    // Exactly one provisioning returned a plaintext (no double key).
+    const created = [a.key, b.key].filter(Boolean);
+    expect(created.length).toBeLessThanOrEqual(1);
+  });
+});

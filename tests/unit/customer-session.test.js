@@ -48,4 +48,24 @@ describe("customerSession", () => {
     const adminToken = await createDashboardAuthToken();
     expect(await getCustomerSession(adminToken)).toBeNull();
   });
+
+  it("cookie is secure when getPublicOrigin(request) is https", async () => {
+    const { shouldUseSecureCookie } = await import("@/lib/auth/customerSession.js");
+    // BASE_URL drives getPublicOrigin without trusting request headers.
+    const prev = process.env.BASE_URL;
+    process.env.BASE_URL = "https://router.example.com";
+    try {
+      const req = new Request("http://localhost:20128/x"); // plain http request
+      expect(shouldUseSecureCookie(req)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.BASE_URL;
+      else process.env.BASE_URL = prev;
+    }
+    // And still secure on a direct https request to a trusted host (no BASE_URL).
+    delete process.env.BASE_URL;
+    const httpsReq = new Request("https://localhost:3000/x");
+    expect(shouldUseSecureCookie(httpsReq)).toBe(true);
+    const httpReq = new Request("http://localhost:20128/x");
+    expect(shouldUseSecureCookie(httpReq)).toBe(false);
+  });
 });

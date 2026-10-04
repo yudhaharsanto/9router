@@ -32,5 +32,7 @@ export async function GET(request) {
     if (plaintext) body.revealedKey = plaintext;
   }
 
-  return NextResponse.json(body);
+  return NextResponse.json(body, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

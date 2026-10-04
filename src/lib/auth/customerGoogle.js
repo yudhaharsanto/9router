@@ -13,10 +13,18 @@ const SCOPES = "openid email profile";
 
 export async function getGoogleOAuthConfig() {
   const settings = await getSettings();
-  const clientId = (settings.googleOAuthClientId || process.env.GOOGLE_CLIENT_ID || "").trim();
-  const clientSecret = (settings.googleOAuthClientSecret || process.env.GOOGLE_CLIENT_SECRET || "").trim();
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
+  // Atomic pair: never mix a settings client with an env secret (or vice versa) —
+  // a half-configured source must not silently pair with the other one.
+  const pairs = [
+    [settings.googleOAuthClientId, settings.googleOAuthClientSecret],
+    [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET],
+  ];
+  for (const [clientId, clientSecret] of pairs) {
+    const id = (clientId || "").trim();
+    const secret = (clientSecret || "").trim();
+    if (id && secret) return { clientId: id, clientSecret: secret };
+  }
+  return null;
 }
 
 export function buildGoogleAuthUrl({ clientId, redirectUri, state, codeChallenge }) {

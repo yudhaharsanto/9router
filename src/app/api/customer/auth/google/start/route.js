@@ -29,7 +29,8 @@ export async function GET(request) {
   const baseOptions = { httpOnly: true, secure: false, sameSite: "lax", path: "/", maxAge: 600 };
   // secure matches the admin oidc start route's behavior; getPublicOrigin already
   // restricts untrusted hosts.
-  if (process.env.AUTH_COOKIE_SECURE === "true" || request.headers.get("x-forwarded-proto") === "https") {
+  const { shouldUseSecureCookie } = await import("@/lib/auth/customerSession");
+  if (shouldUseSecureCookie(request)) {
     baseOptions.secure = true;
   }
   cookieStore.set("crx_oauth_state", state, baseOptions);

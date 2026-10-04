@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { DATA_DIR } from "@/lib/dataDir";
+import { getPublicOrigin } from "@/lib/auth/oidc";
 
 const SESSION_MAX_AGE_SEC = 7 * 24 * 60 * 60;
 
@@ -29,8 +30,15 @@ const SECRET = new TextEncoder().encode(
 
 export function shouldUseSecureCookie(request) {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";
-  const forwardedProto = request?.headers?.get?.("x-forwarded-proto");
-  return forceSecureCookie || forwardedProto === "https";
+  if (forceSecureCookie) return true;
+  if (request?.headers?.get?.("x-forwarded-proto") === "https") return true;
+  // BASE_URL=https://... or a direct https request — getPublicOrigin already
+  // enforces trusted-host rules, so this adds no header-trust risk.
+  try {
+    return getPublicOrigin(request).startsWith("https://");
+  } catch {
+    return false;
+  }
 }
 
 export async function createCustomerAuthToken({ customerId }) {

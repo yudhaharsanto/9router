@@ -48,6 +48,36 @@ describe("getGoogleOAuthConfig", () => {
     const mod = await import("@/lib/auth/customerGoogle.js");
     expect(await mod.getGoogleOAuthConfig()).toBeNull();
   });
+
+  it("resolves as an atomic pair — no mixing settings client with env secret", async () => {
+    vi.resetModules();
+    process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "9router-cust-google3-"));
+    delete global._dbAdapter;
+    const { updateSettings } = await import("@/lib/db/index.js");
+    // Settings client id set, secret blank; env has only a secret -> null.
+    process.env.GOOGLE_CLIENT_ID = "";
+    process.env.GOOGLE_CLIENT_SECRET = "env-only-secret";
+    await updateSettings({ googleOAuthClientId: "set-client", googleOAuthClientSecret: "" });
+    let mod = await import("@/lib/auth/customerGoogle.js");
+    expect(await mod.getGoogleOAuthConfig()).toBeNull();
+
+    // Both set in settings -> pair used.
+    await updateSettings({ googleOAuthClientId: "set-client", googleOAuthClientSecret: "set-secret" });
+    mod = await import("@/lib/auth/customerGoogle.js");
+    expect(await mod.getGoogleOAuthConfig()).toEqual({
+      clientId: "set-client",
+      clientSecret: "set-secret",
+    });
+
+    // Settings partial again, env complete -> env pair used (not mixed).
+    process.env.GOOGLE_CLIENT_ID = "env-client";
+    await updateSettings({ googleOAuthClientSecret: "" });
+    mod = await import("@/lib/auth/customerGoogle.js");
+    expect(await mod.getGoogleOAuthConfig()).toEqual({
+      clientId: "env-client",
+      clientSecret: "env-only-secret",
+    });
+  });
 });
 
 describe("buildGoogleAuthUrl", () => {

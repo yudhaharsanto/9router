@@ -51,6 +51,11 @@ export {
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
 } from "./repos/pricingRepo.js";
 
+// Customer billing (phase 1)
+export {
+  getOrCreateCustomer, getCustomerById, setCustomerStatus,
+} from "./repos/customersRepo.js";
+
 // Disabled models
 export {
   getDisabledModels, getDisabledByProvider, disableModels, enableModels,

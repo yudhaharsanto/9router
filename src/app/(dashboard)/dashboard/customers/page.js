@@ -74,6 +74,11 @@ export default function CustomersPage() {
   // Read-only view of what customers are billed: official catalog price × (1 − discountRate).
   const [pricing, setPricing] = useState(null);
   const [pricingOpen, setPricingOpen] = useState(false);
+  // Public model ↔ combo mapping (spec §3.6)
+  const [publicModels, setPublicModels] = useState(null);
+  const [comboOptions, setComboOptions] = useState([]);
+  const [newPub, setNewPub] = useState({ publicName: "", comboId: "" });
+  const [pubBusy, setPubBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +89,7 @@ export default function CustomersPage() {
           fetch("/api/settings", { cache: "no-store" }),
           fetch("/api/pricing", { cache: "no-store" }),
         ]);
+        const pmRes = await fetch("/api/admin/public-models", { cache: "no-store" });
         if (!cRes.ok) throw new Error(`customers: HTTP ${cRes.status}`);
         const body = await cRes.json();
         if (!cancelled) setCustomers(body.customers || []);
@@ -100,6 +106,11 @@ export default function CustomersPage() {
           }
         }
         if (pRes.ok && !cancelled) setPricing(await pRes.json());
+        if (pmRes.ok && !cancelled) {
+          const pm = await pmRes.json();
+          setPublicModels(pm.publicModels || []);
+          setComboOptions(pm.combos || []);
+        }
       } catch (e) {
         if (!cancelled) setError(String(e?.message || e));
       }
@@ -158,6 +169,67 @@ export default function CustomersPage() {
       setReconResult({ error: String(e?.message || e) });
     } finally {
       setReconBusy(false);
+    }
+  };
+
+  // Public model mapping CRUD (spec §3.6)
+  const reloadPublicModels = async () => {
+    const res = await fetch("/api/admin/public-models", { cache: "no-store" });
+    if (res.ok) {
+      const pm = await res.json();
+      setPublicModels(pm.publicModels || []);
+      setComboOptions(pm.combos || []);
+    }
+  };
+
+  const savePublicModel = async () => {
+    setPubBusy(true);
+    try {
+      const res = await fetch("/api/admin/public-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicName: newPub.publicName.trim(), comboId: newPub.comboId, enabled: true }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setNewPub({ publicName: "", comboId: "" });
+      await reloadPublicModels();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setPubBusy(false);
+    }
+  };
+
+  const togglePublicModel = async (m) => {
+    setPubBusy(true);
+    try {
+      const res = await fetch("/api/admin/public-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicName: m.publicName, comboId: m.comboId, enabled: !m.enabled }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await reloadPublicModels();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setPubBusy(false);
+    }
+  };
+
+  const deletePublicModel = async (m) => {
+    setPubBusy(true);
+    try {
+      const res = await fetch(`/api/admin/public-models?id=${encodeURIComponent(m.id)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await reloadPublicModels();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setPubBusy(false);
     }
   };
 
@@ -333,6 +405,92 @@ export default function CustomersPage() {
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
           <div>
+            <h3 className="font-semibold">Public Models (Combo Mapping)</h3>
+            <p className="text-xs text-text-muted">
+              Customers call these names; each maps to a combo. Combo IDs and provider names never reach customers.
+            </p>
+          </div>
+        </div>
+        <div className="p-4 flex flex-col sm:flex-row gap-2 border-b border-border">
+          <input
+            type="text"
+            placeholder="Public model name (e.g. glm-5.3-flash)"
+            value={newPub.publicName}
+            onChange={(e) => setNewPub((s) => ({ ...s, publicName: e.target.value }))}
+            className="flex-1 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <select
+            value={newPub.comboId}
+            onChange={(e) => setNewPub((s) => ({ ...s, comboId: e.target.value }))}
+            className="flex-1 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          >
+            <option value="">Select combo…</option>
+            {comboOptions.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={savePublicModel}
+            disabled={pubBusy || !newPub.publicName.trim() || !newPub.comboId}
+            className="rounded-md bg-primary px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Add / Update
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
+              <tr>
+                <th className="px-6 py-3">Public Name</th>
+                <th className="px-6 py-3">Combo</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {!publicModels || publicModels.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
+                    No public models yet. Create combos on the Combo page first.
+                  </td>
+                </tr>
+              ) : (
+                publicModels.map((m) => (
+                  <tr key={m.id} className="hover:bg-bg-subtle/20 transition-colors">
+                    <td className="px-6 py-3 font-mono text-xs">{m.publicName}</td>
+                    <td className="px-6 py-3">{m.comboName}</td>
+                    <td className="px-6 py-3">
+                      <Badge variant={m.enabled ? "success" : "error"}>{m.enabled ? "enabled" : "disabled"}</Badge>
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          disabled={pubBusy}
+                          onClick={() => togglePublicModel(m)}
+                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-bg-subtle disabled:opacity-50"
+                        >
+                          {m.enabled ? "Disable" : "Enable"}
+                        </button>
+                        <button
+                          disabled={pubBusy}
+                          onClick={() => deletePublicModel(m)}
+                          className="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-600 hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
+          <div>
             <h3 className="font-semibold">Customer Sell Pricing</h3>
             <p className="text-xs text-text-muted">
               What customers are billed: official price × (1 − discount). Edit official rates via{" "}
@@ -352,15 +510,14 @@ export default function CustomersPage() {
               <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
                 <tr>
                   <th className="px-6 py-3">Model</th>
-                  <th className="px-6 py-3 text-right">Input (official / sell)</th>
-                  <th className="px-6 py-3 text-right">Output (official / sell)</th>
-                  <th className="px-6 py-3 text-right">Cached (official / sell)</th>
+                  <th className="px-6 py-3 text-right">Official $/1M</th>
+                  <th className="px-6 py-3 text-right">Customer $/1M (−{Math.round((1 - sellFactor) * 100)}%)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {!pricing || Object.keys(pricing).length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
+                    <td colSpan={3} className="px-6 py-8 text-center text-text-muted">
                       No pricing data.
                     </td>
                   </tr>
@@ -372,14 +529,11 @@ export default function CustomersPage() {
                           <div className="font-medium">{model}</div>
                           <div className="text-xs text-text-muted">{provider}</div>
                         </td>
-                        <td className="px-6 py-2.5 text-right font-mono text-xs">
-                          {fmtRate(p.input)} / {fmtRate((p.input ?? 0) * sellFactor)}
+                        <td className="px-6 py-2.5 text-right font-mono text-xs text-text-muted">
+                          in {fmtRate(p.input)} · out {fmtRate(p.output)} · cached {fmtRate(p.cached ?? p.input)}
                         </td>
                         <td className="px-6 py-2.5 text-right font-mono text-xs">
-                          {fmtRate(p.output)} / {fmtRate((p.output ?? 0) * sellFactor)}
-                        </td>
-                        <td className="px-6 py-2.5 text-right font-mono text-xs">
-                          {fmtRate(p.cached ?? p.input)} / {fmtRate((p.cached ?? p.input ?? 0) * sellFactor)}
+                          in {fmtRate((p.input ?? 0) * sellFactor)} · out {fmtRate((p.output ?? 0) * sellFactor)} · cached {fmtRate((p.cached ?? p.input ?? 0) * sellFactor)}
                         </td>
                       </tr>
                     ))

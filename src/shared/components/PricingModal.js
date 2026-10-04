@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getDefaultPricing, formatCost } from "open-sse/providers/pricing.js";
+import Modal from "./Modal";
+import Button from "./Button";
+import { getDefaultPricing } from "open-sse/providers/pricing.js";
 
 export default function PricingModal({ isOpen, onClose, onSave }) {
   const [pricingData, setPricingData] = useState({});
@@ -9,31 +11,25 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
-      loadPricing();
-    }
-  }, [isOpen]);
-
-  const loadPricing = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/pricing");
-      if (response.ok) {
-        const data = await response.json();
-        setPricingData(data);
-      } else {
-        // Fallback to defaults
-        const defaults = getDefaultPricing();
-        setPricingData(defaults);
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const response = await fetch("/api/pricing");
+        const data = response.ok ? await response.json() : getDefaultPricing();
+        if (!cancelled) setPricingData(data);
+      } catch (error) {
+        console.error("Failed to load pricing:", error);
+        if (!cancelled) setPricingData(getDefaultPricing());
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (error) {
-      console.error("Failed to load pricing:", error);
-      const defaults = getDefaultPricing();
-      setPricingData(defaults);
-    } finally {
-      setLoading(false);
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const handlePricingChange = (provider, model, field, value) => {
     const numValue = parseFloat(value);
@@ -94,20 +90,29 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
   const pricingFields = ["input", "output", "cached", "reasoning", "cache_creation"];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-base border border-border rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Pricing Configuration</h2>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Pricing Configuration"
+      size="full"
+      footer={
+        <>
           <button
-            onClick={onClose}
-            className="text-text-muted hover:text-text text-2xl leading-none"
+            onClick={handleReset}
+            className="px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 rounded border border-red-500/20 transition-colors disabled:opacity-50"
+            disabled={saving}
           >
-            ×
+            Reset to Defaults
           </button>
-        </div>
-
-        {/* Content */}
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleSave} loading={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </>
+      }
+    >
         <div className="flex-1 overflow-auto p-4">
           {loading ? (
             <div className="text-center py-8 text-text-muted">Loading pricing data...</div>
@@ -175,34 +180,6 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
             </div>
           )}
         </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-border flex items-center justify-between gap-2">
-          <button
-            onClick={handleReset}
-            className="px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 rounded border border-red-500/20 transition-colors"
-            disabled={saving}
-          >
-            Reset to Defaults
-          </button>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-text-muted hover:text-text border border-border rounded transition-colors"
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              className="px-4 py-2 text-sm bg-primary text-white rounded hover:bg-primary/90 transition-colors disabled:opacity-50"
-              disabled={saving}
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

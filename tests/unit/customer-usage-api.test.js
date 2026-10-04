@@ -88,6 +88,46 @@ describe("GET /api/customer/usage", () => {
     const body = await res.json();
     expect(body.items.length).toBe(1);
   });
+
+  it("totals expose official vs charged (ledger usage_debit) with saved = max(0, official − charged)", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-totals" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    // Price the model so the usage row gets a nonzero official cost.
+    const { updatePricing } = await import("@/lib/db/repos/pricingRepo.js");
+    await updatePricing({ p: { m: { input: 1, output: 2 } } }); // $1/$2 per 1M
+    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 10, completion_tokens: 10 }, apiKey: key }); // official cost > 0
+
+    // Charge less than official → saved = official − charged.
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    await ledger.creditCustomer(c.id, 1_000_000, { refType: "test", refId: "seed-t1" });
+    const hold = await ledger.holdReserve(c.id, 1_000_000, "req-t1");
+    expect(hold.ok).toBe(true);
+    // 10 in + 10 out at $1/$2 per 1M → official 30 µ$; charge 10 µ$ < official.
+    await ledger.settleUsage(c.id, "req-t1", 10, {});
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage", token))).json();
+    expect(body.totals.chargedMicros).toBe(10);
+    expect(body.totals.officialMicros).toBe(30);
+    expect(body.totals.savedMicros).toBe(20);
+  });
+
+  it("saved floors at 0 when charged exceeds official estimate", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-over" });
+    await db.createCustomerKey(c.id);
+    const token = await sessionFor(c);
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    await ledger.creditCustomer(c.id, 1_000_000, { refType: "test", refId: "seed-t2" });
+    const hold = await ledger.holdReserve(c.id, 1_000_000, "req-t2");
+    expect(hold.ok).toBe(true);
+    await ledger.settleUsage(c.id, "req-t2", 700, {});
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage", token))).json();
+    expect(body.totals.officialMicros).toBe(0);
+    expect(body.totals.savedMicros).toBe(0);
+  });
 });
 
 describe("GET /api/customer/ledger", () => {

@@ -270,7 +270,7 @@ function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
         <div className="flex flex-col gap-4">
-          <BalanceCard balanceMicros={me.balance?.balanceMicros} />
+          <BalanceCard balance={me.balance} />
           <ApiKeyCard
             mask={me.key?.mask}
             plaintext={plaintext}
@@ -560,8 +560,9 @@ function TopUpCard() {
   );
 }
 
-function BalanceCard({ balanceMicros }) {
-  const micros = Number(balanceMicros) || 0;
+function BalanceCard({ balance }) {
+  const micros = Number(balance?.balanceMicros) || 0;
+  const reserved = Number(balance?.reservedMicros) || 0;
   const low = micros < 100_000; // < $0.10
   return (
     <Card className="flex flex-col gap-1.5 px-4 py-4">
@@ -572,7 +573,8 @@ function BalanceCard({ balanceMicros }) {
         {fmtMoney(micros)}
       </span>
       <span className="text-[11px] text-text-muted">
-        {fmt(micros)} µ$ · deducted per request once pricing is enabled
+        {fmt(micros)} µ$ · {reserved > 0 ? `${fmtMoney(reserved)} held for in-flight requests · ` : ""}
+        deducted per request
       </span>
     </Card>
   );
@@ -682,13 +684,17 @@ function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
 function UsageCard() {
   const [period, setPeriod] = useState("7d");
   const [items, setItems] = useState(null);
+  const [totals, setTotals] = useState({ officialMicros: 0, chargedMicros: 0, savedMicros: 0 });
 
   const load = useCallback((p) => {
     fetch(`/api/customer/usage?period=${encodeURIComponent(p)}`, {
       headers: { "Cache-Control": "no-store" },
     })
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => setItems(d.items || []))
+      .then((r) => (r.ok ? r.json() : { items: [], totals: { officialMicros: 0, chargedMicros: 0, savedMicros: 0 } }))
+      .then((d) => {
+        setItems(d.items || []);
+        setTotals(d.totals || { officialMicros: 0, chargedMicros: 0, savedMicros: 0 });
+      })
       .catch(() => setItems([]));
   }, []);
 
@@ -696,7 +702,8 @@ function UsageCard() {
     load(period);
   }, [period, load]);
 
-  const totalCost = (items || []).reduce((s, r) => s + (Number(r.cost) || 0), 0);
+  const totalIn = (items || []).reduce((s, r) => s + (Number(r.promptTokens) || 0), 0);
+  const totalOut = (items || []).reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
@@ -720,13 +727,36 @@ function UsageCard() {
         </div>
       ) : (
         <>
+          <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
+              <div className="text-text-muted">Input</div>
+              <div className="text-text-main tabular-nums font-semibold">{fmtCompact(totalIn)}</div>
+            </div>
+            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
+              <div className="text-text-muted">Output</div>
+              <div className="text-text-main tabular-nums font-semibold">{fmtCompact(totalOut)}</div>
+            </div>
+            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
+              <div className="text-text-muted">You paid</div>
+              <div className="text-text-main tabular-nums font-semibold">{fmtMoney(totals.chargedMicros || 0)}</div>
+            </div>
+            <div className="rounded-lg bg-brand-500/10 px-2.5 py-1.5">
+              <div className="text-text-muted">You saved</div>
+              <div className="text-primary tabular-nums font-semibold">
+                {fmtMoney(totals.savedMicros || 0)}
+                <span className="block text-[10px] text-text-muted font-normal">
+                  official {fmtMoney(totals.officialMicros || 0)}
+                </span>
+              </div>
+            </div>
+          </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle/60">
             {items.map((r, i) => (
               <UsageRow key={i} r={r} />
             ))}
           </div>
           <p className="text-[11px] text-text-muted">
-            {items.length} request(s) · est. cost {fmtMoney(totalCost)}
+            {items.length} request(s) · &ldquo;official&rdquo; rows below are catalog prices; you are billed at your discounted rate.
           </p>
         </>
       )}
@@ -759,7 +789,7 @@ function UsageRow({ r }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-text-muted">Biaya</div>
+            <div className="text-text-muted">Official</div>
             <div className="text-text-main tabular-nums">{fmtMoney(r.cost)}</div>
           </div>
           <div className={`text-right w-12 ${r.status && r.status !== "ok" ? "text-red-500" : ""}`}>

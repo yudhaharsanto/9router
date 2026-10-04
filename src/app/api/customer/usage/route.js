@@ -64,5 +64,19 @@ export async function GET(request) {
       status: r.status,
       mask: active.keyMask,
     }));
-  return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+
+  // Totals for the "official vs what you paid" view: official cost comes from
+  // the usage stats above; the actual charged amount is the customer's
+  // usage_debit ledger entries in the same window (integer micro-USD).
+  const chargedRows = db.all(
+    `SELECT amountMicros FROM ledger
+      WHERE customerId = ? AND type = 'usage_debit' AND createdAt >= COALESCE(?, '1970-01-01')`,
+    [session.customerId, startDate ? startDate.toISOString() : null]
+  );
+  const officialMicros = Math.round(items.reduce((s, r) => s + (Number(r.cost) || 0) * 1_000_000, 0));
+  const chargedMicros = -chargedRows.reduce((s, r) => s + Number(r.amountMicros), 0); // debits are negative
+  return NextResponse.json(
+    { items, totals: { officialMicros, chargedMicros, savedMicros: Math.max(0, officialMicros - chargedMicros) } },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

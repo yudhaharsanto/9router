@@ -36,6 +36,8 @@ const PUBLIC_API_PATHS = [
   "/api/customer/auth/google",
   // Logout only clears the crx_session cookie — allow without a session.
   "/api/customer/auth/logout",
+  // Tako payment callback — no session; the HMAC over the raw body is the auth.
+  "/api/customer/webhooks/tako",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).

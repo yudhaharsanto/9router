@@ -30,14 +30,6 @@ import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
-import { AI_PROVIDERS } from "@/shared/constants/providers";
-
-// Static base options for the "excluded providers" picker, sorted by name.
-// Custom compatible nodes are merged in at runtime (see providerOptions).
-const BASE_PROVIDER_OPTIONS = Object.values(AI_PROVIDERS)
-  .map((p) => ({ id: p.id, name: p.name || p.id, sub: p.id }))
-  .sort((a, b) => a.name.localeCompare(b.name));
-
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -59,41 +51,17 @@ export default function APIPageClient({ machineId }) {
   const [newKeyModels, setNewKeyModels] = useState([]);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [modelSelectTarget, setModelSelectTarget] = useState("create"); // "create" | "edit"
-  const [modelSelectMode, setModelSelectMode] = useState("allowlist"); // "allowlist" | "aliasTarget"
   const [providerConnections, setProviderConnections] = useState([]);
   const [modelAliases, setModelAliases] = useState({});
 
-  // Inline custom-model / alias entry
-  const [customModelName, setCustomModelName] = useState("");
-  const [customModelTarget, setCustomModelTarget] = useState("");
-  const [addingCustomModel, setAddingCustomModel] = useState(false);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
   const [hasPassword, setHasPassword] = useState(true);
   const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
 
-  // Token-limit related settings
-  const [usageLookupToken, setUsageLookupToken] = useState("");
-  const [excludedProviders, setExcludedProviders] = useState([]);
-  const [customNodes, setCustomNodes] = useState([]);
-  const [provDropdownOpen, setProvDropdownOpen] = useState(false);
-  const [provSearch, setProvSearch] = useState("");
-  const [savingLimitSettings, setSavingLimitSettings] = useState(false);
-  const [limitSettingsSaved, setLimitSettingsSaved] = useState(false);
 
-  // Combined provider options: known providers + custom compatible nodes.
-  const providerOptions = [
-    ...BASE_PROVIDER_OPTIONS,
-    ...customNodes.map((n) => ({
-      id: n.id,
-      name: n.name || n.prefix || n.id,
-      sub: n.prefix ? `custom · ${n.prefix}` : "custom",
-      custom: true,
-    })),
-  ];
-
-  // Cloudflare Tunnel state
+    // Cloudflare Tunnel state
   const [tunnelChecking, setTunnelChecking] = useState(true);
   const [tunnelEnabled, setTunnelEnabled] = useState(false);
   const [tunnelReachable, setTunnelReachable] = useState(false);
@@ -350,12 +318,6 @@ export default function APIPageClient({ machineId }) {
         setRequireApiKey(data.requireApiKey || false);
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
-        setUsageLookupToken(data.usageLookupToken || "");
-        setExcludedProviders(
-          Array.isArray(data.tokenLimitExcludedProviders)
-            ? data.tokenLimitExcludedProviders
-            : [],
-        );
         setTunnelDashboardAccess(data.tunnelDashboardAccess || false);
       }
       if (statusRes.ok) {
@@ -945,12 +907,6 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
-  const toggleExcludedProvider = (id) => {
-    setExcludedProviders((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
-    );
-  };
-
   // Per-key model allow-list helpers
   // "Active" means the connection's toggle is on — same rule as
   // MitmPageClient.getActiveProviders(). testStatus is deliberately not part of
@@ -965,23 +921,12 @@ export default function APIPageClient({ machineId }) {
     modelSelectTarget === "edit" ? editLimitModels : newKeyModels;
   const openModelSelect = (target) => {
     setModelSelectTarget(target);
-    setModelSelectMode("allowlist");
-    setShowModelSelect(true);
-  };
-  const openAliasTargetSelect = () => {
-    setModelSelectMode("aliasTarget");
     setShowModelSelect(true);
   };
   const handleModelPicked = (m) => {
-    if (modelSelectMode === "aliasTarget") {
-      setCustomModelTarget(m?.value ?? m);
-      setShowModelSelect(false);
-      return;
-    }
     addSelectedModel(m);
   };
   const handleModelDeselected = (m) => {
-    if (modelSelectMode === "aliasTarget") return;
     removeSelectedModel(m);
   };
   const addSelectedModel = (m) => {
@@ -1015,108 +960,6 @@ export default function APIPageClient({ machineId }) {
     } catch {}
   };
 
-  const deleteAlias = async (aliasName) => {
-    try {
-      const res = await fetch(
-        `/api/models/alias?alias=${encodeURIComponent(aliasName)}`,
-        { method: "DELETE" },
-      );
-      if (res.ok) await refreshAliases();
-    } catch (error) {
-      console.log("Error deleting alias:", error);
-    }
-  };
-
-  const deleteAllAliases = async () => {
-    const names = Object.keys(modelAliases || {});
-    if (names.length === 0) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Delete all ${names.length} model alias(es)? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      await Promise.all(
-        names.map((n) =>
-          fetch(`/api/models/alias?alias=${encodeURIComponent(n)}`, {
-            method: "DELETE",
-          }).catch(() => {}),
-        ),
-      );
-      await refreshAliases();
-    } catch (error) {
-      console.log("Error deleting all aliases:", error);
-    }
-  };
-
-  // Create a global model alias (alias name → target model).
-  const addGlobalAlias = async () => {
-    const name = customModelName.trim();
-    const mapTo = customModelTarget.trim();
-    if (!name || !mapTo) return;
-    setAddingCustomModel(true);
-    try {
-      const res = await fetch("/api/models/alias", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ alias: name, model: mapTo }),
-      });
-      if (res.ok) {
-        await refreshAliases();
-        setCustomModelName("");
-        setCustomModelTarget("");
-      }
-    } catch (error) {
-      console.log("Error adding alias:", error);
-    } finally {
-      setAddingCustomModel(false);
-    }
-  };
-
-  const refreshCustomNodes = async () => {
-    try {
-      const res = await fetch("/api/provider-nodes", { cache: "no-store" });
-      if (res.ok) {
-        const nd = await res.json();
-        setCustomNodes(Array.isArray(nd.nodes) ? nd.nodes : []);
-      }
-    } catch {
-      /* keep existing list on failure */
-    }
-  };
-
-  const openProviderPicker = () => {
-    setProvSearch("");
-    setProvDropdownOpen(true);
-    refreshCustomNodes();
-  };
-
-  const handleSaveLimitSettings = async () => {
-    setSavingLimitSettings(true);
-    setLimitSettingsSaved(false);
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          usageLookupToken: usageLookupToken.trim(),
-          tokenLimitExcludedProviders: excludedProviders,
-        }),
-      });
-      if (res.ok) {
-        setLimitSettingsSaved(true);
-        await fetchData();
-        setTimeout(() => setLimitSettingsSaved(false), 2500);
-      }
-    } catch (error) {
-      console.log("Error saving limit settings:", error);
-    } finally {
-      setSavingLimitSettings(false);
-    }
-  };
 
   const handleDeleteKey = async (id) => {
     setConfirmState({
@@ -1766,292 +1609,7 @@ export default function APIPageClient({ machineId }) {
         )}
       </Card>
 
-      {/* Token Limit Settings */}
-      <Card className="mt-6">
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold">Token Limit Settings</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            Configure providers excluded from token counting.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-main">
-              Providers excluded from token counting
-            </label>
-            <button
-              type="button"
-              onClick={openProviderPicker}
-              className="w-full flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
-            >
-              <span
-                className={
-                  excludedProviders.length
-                    ? "text-text-main"
-                    : "text-text-muted"
-                }
-              >
-                {excludedProviders.length
-                  ? `${excludedProviders.length} provider${excludedProviders.length > 1 ? "s" : ""} excluded`
-                  : "Select providers to exclude"}
-              </span>
-              <span className="material-symbols-outlined text-[20px] text-text-muted">
-                expand_more
-              </span>
-            </button>
 
-            {excludedProviders.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {excludedProviders.map((id) => {
-                  const opt = providerOptions.find((p) => p.id === id);
-                  return (
-                    <span
-                      key={id}
-                      className="inline-flex items-center gap-1 text-xs bg-surface-2 rounded-full pl-2.5 pr-1 py-1"
-                    >
-                      {opt?.name || id}
-                      <button
-                        type="button"
-                        onClick={() => toggleExcludedProvider(id)}
-                        className="hover:text-red-500 text-text-muted"
-                        title="Remove"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">
-                          close
-                        </span>
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-            <p className="text-xs text-text-muted">
-              Tokens from these providers are NOT counted toward API key limits
-              or usage.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={handleSaveLimitSettings}
-              loading={savingLimitSettings}
-            >
-              Save settings
-            </Button>
-            {limitSettingsSaved && (
-              <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">
-                  check_circle
-                </span>
-                Saved
-              </span>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      {/* Model Aliases (global) */}
-      <Card className="mt-6">
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold">Model Aliases</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            Define a custom name that maps to a real model. The alias can be
-            used in the API (e.g.{" "}
-            <code className="bg-surface-2 px-1 rounded">
-              codebuddy/claude-opus-4.7-1m
-            </code>{" "}
-            →{" "}
-            <code className="bg-surface-2 px-1 rounded">
-              cc/claude-opus-4.7
-            </code>
-            ). Aliases are global and work for every key.
-          </p>
-        </div>
-        <div className="flex flex-col gap-3">
-          <Input
-            label="Alias name"
-            value={customModelName}
-            onChange={(e) => setCustomModelName(e.target.value)}
-            placeholder="e.g. codebuddy/claude-opus-4.7-1m"
-          />
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-main">
-              Maps to
-            </label>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={openAliasTargetSelect}
-                className="flex-1 flex items-center justify-between gap-2 py-2.5 px-3 text-sm text-left bg-surface-2 border border-transparent rounded-[10px] hover:border-brand-500/30 transition-all"
-              >
-                <span
-                  className={
-                    customModelTarget
-                      ? "text-text-main truncate"
-                      : "text-text-muted"
-                  }
-                >
-                  {customModelTarget || "Select target model"}
-                </span>
-                <span className="material-symbols-outlined text-[20px] text-text-muted">
-                  expand_more
-                </span>
-              </button>
-              {customModelTarget && (
-                <button
-                  type="button"
-                  onClick={() => setCustomModelTarget("")}
-                  className="p-1.5 text-text-muted hover:text-red-500"
-                  title="Clear target"
-                >
-                  <span className="material-symbols-outlined text-[18px]">
-                    close
-                  </span>
-                </button>
-              )}
-            </div>
-          </div>
-          <div>
-            <Button
-              size="sm"
-              onClick={addGlobalAlias}
-              loading={addingCustomModel}
-              disabled={!customModelName.trim() || !customModelTarget.trim()}
-            >
-              Add alias
-            </Button>
-          </div>
-
-          {Object.keys(modelAliases).length > 0 && (
-            <div className="border-t border-border-subtle pt-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-xs font-medium text-text-muted">
-                  Existing aliases ({Object.keys(modelAliases).length})
-                </p>
-                <button
-                  type="button"
-                  onClick={deleteAllAliases}
-                  className="text-xs text-text-muted hover:text-red-500 flex items-center gap-0.5"
-                  title="Delete all aliases"
-                >
-                  <span className="material-symbols-outlined text-[14px]">
-                    delete_sweep
-                  </span>
-                  Delete all
-                </button>
-              </div>
-              <div className="max-h-44 overflow-y-auto flex flex-col gap-1 rounded-lg border border-border-subtle p-1.5">
-                {Object.entries(modelAliases).map(
-                  ([aliasName, targetModel]) => (
-                    <div
-                      key={aliasName}
-                      className="flex items-center gap-2 text-xs bg-surface-2/60 rounded px-2 py-1.5"
-                    >
-                      <span className="flex-1 truncate">
-                        <code className="text-text-main">{aliasName}</code>
-                        <span className="text-text-muted">
-                          {" "}
-                          → {String(targetModel)}
-                        </span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => deleteAlias(aliasName)}
-                        className="text-text-muted hover:text-red-500 shrink-0"
-                        title="Delete alias"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">
-                          close
-                        </span>
-                      </button>
-                    </div>
-                  ),
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Provider exclusion picker Modal */}
-      <Modal
-        isOpen={provDropdownOpen}
-        title="Exclude providers from token counting"
-        onClose={() => setProvDropdownOpen(false)}
-      >
-        <div className="flex flex-col gap-3">
-          <Input
-            placeholder="Search providers..."
-            value={provSearch}
-            onChange={(e) => setProvSearch(e.target.value)}
-            icon="search"
-            autoFocus
-          />
-          <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>{excludedProviders.length} selected</span>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={refreshCustomNodes}
-                className="flex items-center gap-1 hover:text-text-main"
-                title="Refresh custom providers"
-              >
-                <span className="material-symbols-outlined text-[14px]">
-                  refresh
-                </span>
-                Refresh
-              </button>
-              {excludedProviders.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setExcludedProviders([])}
-                  className="hover:text-red-500"
-                >
-                  Clear all
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="max-h-[50vh] overflow-auto -mx-2 px-2 flex flex-col">
-            {providerOptions
-              .filter(
-                (p) =>
-                  p.name.toLowerCase().includes(provSearch.toLowerCase()) ||
-                  p.id.toLowerCase().includes(provSearch.toLowerCase()),
-              )
-              .map((p) => {
-                const checked = excludedProviders.includes(p.id);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => toggleExcludedProvider(p.id)}
-                    className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-left hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <span
-                      className={`material-symbols-outlined text-[18px] ${checked ? "text-brand-500" : "text-text-muted"}`}
-                    >
-                      {checked ? "check_box" : "check_box_outline_blank"}
-                    </span>
-                    <span className="flex-1 truncate">
-                      {p.name}
-                      {p.custom && (
-                        <span className="ml-1.5 text-[10px] uppercase tracking-wide text-brand-500/80 border border-brand-500/30 rounded px-1 py-0.5">
-                          custom
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-xs text-text-muted truncate max-w-[40%]">
-                      {p.sub || p.id}
-                    </span>
-                  </button>
-                );
-              })}
-          </div>
-          <Button onClick={() => setProvDropdownOpen(false)} fullWidth>
-            Done
-          </Button>
-        </div>
-      </Modal>
 
       {/* Per-key model allow-list / alias-target picker */}
       <ModelSelectModal
@@ -2060,21 +1618,10 @@ export default function APIPageClient({ machineId }) {
         onSelect={handleModelPicked}
         onDeselect={handleModelDeselected}
         activeProviders={activeProviders}
-        modelAliases={modelAliases}
-        selectedModel={
-          modelSelectMode === "aliasTarget" ? customModelTarget : undefined
-        }
-        addedModelValues={
-          modelSelectMode === "allowlist" ? currentSelectedModels : []
-        }
-        closeOnSelect={modelSelectMode === "aliasTarget"}
+        addedModelValues={currentSelectedModels}
         alwaysShowCustom
         activeOnly
-        title={
-          modelSelectMode === "aliasTarget"
-            ? "Select target model for alias"
-            : "Allowed Models for API Key"
-        }
+        title="Allowed Models for API Key"
       />
 
       {/* Token Saver inline controls dipindah ke /dashboard/token-saver */}

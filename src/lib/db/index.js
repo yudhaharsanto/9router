@@ -58,6 +58,9 @@ export {
 export {
   createCustomerKey, validateCustomerKey, revokeCustomerKey, getActiveKeyForCustomer,
 } from "./repos/customerKeysRepo.js";
+export {
+  getBalance, creditCustomer, holdReserve, settleUsage, adjustBalance, getLedger, MICROS_PER_USD,
+} from "./repos/ledgerRepo.js";
 
 // Disabled models
 export {

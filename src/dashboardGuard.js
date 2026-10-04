@@ -33,6 +33,9 @@ const PUBLIC_API_PATHS = [
   "/api/version",
   "/api/settings/require-login",
   "/api/public",
+  "/api/customer/auth/google",
+  // Logout only clears the crx_session cookie — allow without a session.
+  "/api/customer/auth/logout",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
@@ -243,6 +246,20 @@ export async function proxy(request) {
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
     if (isPublicApi(pathname)) return NextResponse.next();
+    // Customer portal API: its own crx_session scope. A dashboard auth_token
+    // grants nothing here; a crx_session grants nothing on admin paths (they
+    // fall through to the admin gate below). Logout is exempt — it only clears
+    // a cookie. The JWT check lives in @/lib/auth/customerSession (jose, no DB).
+    if (
+      pathname.startsWith("/api/customer/") &&
+      !pathname.startsWith("/api/customer/auth/logout")
+    ) {
+      const cookieHeader = request.headers.get("cookie") || "";
+      const token = /(?:^|;\s*)crx_session=([^;]*)/.exec(cookieHeader)?.[1];
+      const { getCustomerSession } = await import("@/lib/auth/customerSession");
+      if (token && (await getCustomerSession(token))) return NextResponse.next();
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     if ((await hasValidCliToken(request)) || (await isAuthenticated(request)))
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

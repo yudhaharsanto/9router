@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDashboardAuthSession } from "@/lib/auth/dashboardSession.js";
 import { listPublicModels, upsertPublicModel, deletePublicModel } from "@/lib/db/repos/publicModelsRepo.js";
+import { getPublicPricing, updatePublicPricing } from "@/lib/db/repos/pricingRepo.js";
 import { getCombos } from "@/lib/db/repos/combosRepo.js";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +20,10 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const [mappings, combos] = await Promise.all([
+    const [mappings, combos, pricing] = await Promise.all([
       listPublicModels({ enabledOnly: false }),
       getCombos(),
+      getPublicPricing(),
     ]);
     const nameById = new Map(combos.map((c) => [c.id, c.name]));
     const publicModels = mappings.map((m) => ({
@@ -30,6 +32,7 @@ export async function GET(request) {
       comboId: m.comboId,
       comboName: nameById.get(m.comboId) || "(deleted combo)",
       enabled: m.enabled,
+      pricing: pricing[m.publicName] || null,
     }));
     return NextResponse.json(
       { publicModels, combos: combos.map((c) => ({ id: c.id, name: c.name })) },
@@ -62,6 +65,20 @@ export async function POST(request) {
       return NextResponse.json({ error: "Unknown combo" }, { status: 400 });
     }
     const row = await upsertPublicModel({ publicName, comboId, enabled });
+    // Optional direct sell pricing { input, output, cached, ... } (USD/1M).
+    // Only numeric fields are accepted — everything else is ignored.
+    if (body?.pricing && typeof body.pricing === "object") {
+      const validFields = ["input", "output", "cached", "reasoning", "cache_creation"];
+      const clean = {};
+      for (const [k, v] of Object.entries(body.pricing)) {
+        if (validFields.includes(k) && typeof v === "number" && Number.isFinite(v) && v >= 0) {
+          clean[k] = v;
+        }
+      }
+      if (Object.keys(clean).length > 0) {
+        await updatePublicPricing({ [publicName]: clean });
+      }
+    }
     return NextResponse.json(row, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Error upserting public model:", error);

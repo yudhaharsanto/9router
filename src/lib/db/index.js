@@ -49,6 +49,7 @@ export {
 // Pricing
 export {
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
+  getPublicPricing, updatePublicPricing, deletePublicPricing,
 } from "./repos/pricingRepo.js";
 
 // Customer billing (phase 1)

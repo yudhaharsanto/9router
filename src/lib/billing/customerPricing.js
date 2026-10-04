@@ -51,3 +51,22 @@ export function estimateCostMicros(tokens, sellPricing) {
     reasoningTokens * (sellPricing.reasoning ?? 0);
   return Math.round(micros);
 }
+
+// Direct sell price for a public model name: the admin-set price, verbatim
+// (no discount scaling). Null when the public model has no custom pricing —
+// callers fall back to member-model pricing.
+export async function getPublicSellPricing(publicName) {
+  if (!publicName) return null;
+  const { getPublicPricing } = await import("@/lib/db/repos/pricingRepo.js");
+  const table = await getPublicPricing();
+  const entry = table[publicName];
+  if (!entry || typeof entry !== "object") return null;
+  return {
+    input: entry.input ?? 0,
+    output: entry.output ?? 0,
+    cached: entry.cached ?? entry.input ?? 0,
+    cache_creation: entry.cache_creation ?? 0,
+    reasoning: entry.reasoning ?? entry.output ?? 0,
+    discountRate: 0, // direct price, not discounted
+  };
+}

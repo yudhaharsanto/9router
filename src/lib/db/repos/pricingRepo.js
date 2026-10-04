@@ -106,3 +106,22 @@ export async function resetAllPricing() {
   invalidate();
   return {};
 }
+
+// ── Public-model direct sell pricing ─────────────────────────────────────────
+// Admin-set customer prices per public model name (USD per 1M tokens). When a
+// public model has an entry here, it IS the sell price — no discount scaling —
+// regardless of which combo member served the request.
+const publicPricingKv = makeKv("publicPricing");
+
+export async function getPublicPricing() {
+  return publicPricingKv.getAll();
+}
+
+export async function updatePublicPricing(pricingData) {
+  await publicPricingKv.setMany(pricingData || {});
+  return publicPricingKv.getAll();
+}
+
+export async function deletePublicPricing(publicName) {
+  await publicPricingKv.remove(publicName);
+}

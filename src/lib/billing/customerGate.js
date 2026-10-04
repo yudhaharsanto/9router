@@ -4,7 +4,7 @@
 // are never killed mid-stream.
 import { validateCustomerKey } from "@/lib/db/repos/customerKeysRepo.js";
 import { getBalance, holdReserve } from "@/lib/db/repos/ledgerRepo.js";
-import { getSellPricing, estimateCostMicros } from "@/lib/billing/customerPricing.js";
+import { getSellPricing, getPublicSellPricing, estimateCostMicros } from "@/lib/billing/customerPricing.js";
 
 export const CUSTOMER_KEY_PREFIX = "sk-cust-";
 
@@ -31,10 +31,10 @@ export async function authorizeCustomerRequest(apiKey) {
 // maxTokens is client-declared and only ever bounds the reserve, never the
 // actual charge: settleUsage debits real usage (small overdraft allowed, spec
 // §3.8) and the next request is blocked once available <= 0.
-export async function holdForRequest(customerId, body) {
+export async function holdForRequest(customerId, body, publicName = null) {
   const maxTokens = Math.max(0, Math.floor(Number(body?.max_tokens) || DEFAULT_MAX_TOKENS));
   const model = String(body?.model || "");
-  const pricing = await getSellPricing("openai", model);
+  const pricing = (publicName && await getPublicSellPricing(publicName)) || await getSellPricing("openai", model);
   const outRate = pricing ? pricing.output : FALLBACK_OUTPUT_RATE;
   // max_tokens × rate/1M → micro-USD (rate per 1M × 1e6 µ$ = ×1 per token).
   const reserveMicros = Math.round(maxTokens * (outRate || FALLBACK_OUTPUT_RATE));
@@ -48,16 +48,18 @@ export async function holdForRequest(customerId, body) {
 // charge 0 but still release the hold — pricing gaps must not strand a
 // customer's balance. Units: integer micro-USD. Ledger meta records the
 // margin breakdown (charge vs official upstream cost) for reconciliation.
-export async function settleCustomerUsage(customerId, holdRefId, provider, model, tokens) {
+export async function settleCustomerUsage(customerId, holdRefId, provider, model, tokens, publicName = null) {
   const { settleUsage } = await import("@/lib/db/repos/ledgerRepo.js");
   const { getPricingForModel } = await import("@/lib/db/repos/pricingRepo.js");
   const { getSettings } = await import("@/lib/db/repos/settingsRepo.js");
   const settings = await getSettings();
-  const pricing = await getSellPricing(provider, model);
+  const pricing = (publicName && await getPublicSellPricing(publicName)) || await getSellPricing(provider, model);
   let chargeMicros = pricing ? estimateCostMicros(tokens, pricing) : 0;
   const minCharge = Math.max(0, Math.round(Number(settings.minimumChargeMicros) || 0));
   if (chargeMicros > 0 && chargeMicros < minCharge) chargeMicros = minCharge;
-  const official = await getPricingForModel(provider, model);
+  const official = publicName && pricing
+    ? pricing // direct public price: charge basis == official basis, margin 0
+    : await getPricingForModel(provider, model);
   const officialCostMicros = official ? estimateCostMicros(tokens, official) : 0;
   const result = await settleUsage(customerId, holdRefId, chargeMicros, {
     provider, model,
@@ -80,7 +82,7 @@ export async function releaseHold(customerId, holdRefId) {
 export async function settleCustomerUsageSafe(customerBilling, provider, model, tokens) {
   if (!customerBilling?.customerId || !customerBilling?.holdRefId) return;
   try {
-    await settleCustomerUsage(customerBilling.customerId, customerBilling.holdRefId, provider, model, tokens);
+    await settleCustomerUsage(customerBilling.customerId, customerBilling.holdRefId, provider, model, tokens, customerBilling.publicName);
   } catch (err) {
     console.error(`[CustomerBilling] settle failed for ${customerBilling.customerId}/${customerBilling.holdRefId}:`, err?.message || err);
   }

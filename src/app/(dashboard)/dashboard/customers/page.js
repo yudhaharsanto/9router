@@ -77,7 +77,7 @@ export default function CustomersPage() {
   // Public model ↔ combo mapping (spec §3.6)
   const [publicModels, setPublicModels] = useState(null);
   const [comboOptions, setComboOptions] = useState([]);
-  const [newPub, setNewPub] = useState({ publicName: "", comboId: "" });
+  const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "" } });
   const [pubBusy, setPubBusy] = useState(false);
 
   useEffect(() => {
@@ -185,16 +185,24 @@ export default function CustomersPage() {
   const savePublicModel = async () => {
     setPubBusy(true);
     try {
+      const pricing = {};
+      if (newPub.pricing.input !== "") pricing.input = Number(newPub.pricing.input);
+      if (newPub.pricing.output !== "") pricing.output = Number(newPub.pricing.output);
       const res = await fetch("/api/admin/public-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicName: newPub.publicName.trim(), comboId: newPub.comboId, enabled: true }),
+        body: JSON.stringify({
+          publicName: newPub.publicName.trim(),
+          comboId: newPub.comboId,
+          enabled: true,
+          ...(Object.keys(pricing).length > 0 ? { pricing } : {}),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      setNewPub({ publicName: "", comboId: "" });
+      setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "" } });
       await reloadPublicModels();
     } catch (e) {
       setError(String(e?.message || e));
@@ -429,6 +437,18 @@ export default function CustomersPage() {
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          <input
+            type="number" step="0.01" min="0" placeholder="Sell $/1M input"
+            value={newPub.pricing.input}
+            onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, input: e.target.value } }))}
+            className="w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
+            type="number" step="0.01" min="0" placeholder="Sell $/1M output"
+            value={newPub.pricing.output}
+            onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, output: e.target.value } }))}
+            className="w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
           <button
             onClick={savePublicModel}
             disabled={pubBusy || !newPub.publicName.trim() || !newPub.comboId}
@@ -443,6 +463,7 @@ export default function CustomersPage() {
               <tr>
                 <th className="px-6 py-3">Public Name</th>
                 <th className="px-6 py-3">Combo</th>
+                <th className="px-6 py-3">Sell Price $/1M (in / out)</th>
                 <th className="px-6 py-3">Status</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
@@ -450,7 +471,7 @@ export default function CustomersPage() {
             <tbody className="divide-y divide-border">
               {!publicModels || publicModels.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
+                  <td colSpan={5} className="px-6 py-8 text-center text-text-muted">
                     No public models yet. Create combos on the Combo page first.
                   </td>
                 </tr>
@@ -459,6 +480,11 @@ export default function CustomersPage() {
                   <tr key={m.id} className="hover:bg-bg-subtle/20 transition-colors">
                     <td className="px-6 py-3 font-mono text-xs">{m.publicName}</td>
                     <td className="px-6 py-3">{m.comboName}</td>
+                    <td className="px-6 py-3 font-mono text-xs">
+                      {m.pricing
+                        ? `${fmtRate(m.pricing.input)} / ${fmtRate(m.pricing.output)}`
+                        : <span className="text-text-muted">member price</span>}
+                    </td>
                     <td className="px-6 py-3">
                       <Badge variant={m.enabled ? "success" : "error"}>{m.enabled ? "enabled" : "disabled"}</Badge>
                     </td>

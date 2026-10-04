@@ -89,16 +89,21 @@ export async function handleChat(request, clientRawRequest = null) {
       log.warn("AUTH", "Invalid customer API key");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
-    const hold = await holdForRequest(auth.customerId, body);
+    // Margin guard (spec §3.10): check before any upstream call. Public-name
+    // requests resolve to combos below, where per-member pricing differs —
+    // those skip the guard here (combo members are checked at dispatch).
+    // Public-name resolution first: reserve is priced off the public model's
+    // direct sell price when it has one, else the requested model. Margin
+    // guard (spec §3.10) runs before any upstream call; public-name requests
+    // resolve to combos where per-member pricing differs — those skip the
+    // guard here (combo members are checked at dispatch).
+    const publicModel = await resolvePublicModelRequest(modelStr);
+    if (publicModel) publicModelName = publicModel.publicName;
+    const hold = await holdForRequest(auth.customerId, body, publicModelName);
     if (!hold.ok) {
       log.warn("AUTH", `Insufficient balance for customer ${auth.customerId}`);
       return errorResponse(HTTP_STATUS.PAYMENT_REQUIRED, "Insufficient balance. Please top up.");
     }
-    // Margin guard (spec §3.10): check before any upstream call. Public-name
-    // requests resolve to combos below, where per-member pricing differs —
-    // those skip the guard here (combo members are checked at dispatch).
-    const publicModel = await resolvePublicModelRequest(modelStr);
-    if (publicModel) publicModelName = publicModel.publicName;
     if (!publicModel) {
       const verdict = await evaluateMarginPolicy("openai", modelStr, body);
       if (verdict.blocked) {
@@ -110,6 +115,7 @@ export async function handleChat(request, clientRawRequest = null) {
     }
     customerBilling = auth;
     customerBilling.holdRefId = hold.holdRefId;
+    if (publicModelName) customerBilling.publicName = publicModelName;
   } else if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");

@@ -77,7 +77,7 @@ export default function CustomersPage() {
   // Public model ↔ combo mapping (spec §3.6)
   const [publicModels, setPublicModels] = useState(null);
   const [comboOptions, setComboOptions] = useState([]);
-  const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
+  const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "", cachedPct: "" } });
   const [editingPub, setEditingPub] = useState(null);
   const [pubBusy, setPubBusy] = useState(false);
 
@@ -188,7 +188,7 @@ export default function CustomersPage() {
     setPubBusy(true);
     try {
       const pricing = {};
-      for (const k of ["input", "output", "cached"]) {
+      for (const k of ["input", "output", "cachedPct"]) {
         if (form.pricing[k] !== "" && form.pricing[k] !== undefined) pricing[k] = Number(form.pricing[k]);
       }
       const res = await fetch("/api/admin/public-models", {
@@ -205,7 +205,7 @@ export default function CustomersPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
+      setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cachedPct: "" } });
       setEditingPub(null);
       await reloadPublicModels();
     } catch (e) {
@@ -222,10 +222,10 @@ export default function CustomersPage() {
       pricing: {
         input: m.pricing?.input !== undefined && m.pricing?.input !== null ? String(m.pricing.input) : "",
         output: m.pricing?.output !== undefined && m.pricing?.output !== null ? String(m.pricing.output) : "",
-        cached: m.pricing?.cached !== undefined && m.pricing?.cached !== null ? String(m.pricing.cached) : "",
+        cachedPct: m.pricing?.cachedPct !== undefined && m.pricing?.cachedPct !== null ? String(m.pricing.cachedPct) : "",
       },
     });
-    setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
+    setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cachedPct: "" } });
   };
 
   const togglePublicModel = async (m) => {
@@ -467,13 +467,13 @@ export default function CustomersPage() {
             className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
           />
           <input
-            type="number" step="0.01" min="0" placeholder="Cached $/1M (opt.)"
-            value={newPub.pricing.cached}
-            onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, cached: e.target.value } }))}
+            type="number" step="1" min="0" max="100" placeholder="Cached % of input (opt.)"
+            value={newPub.pricing.cachedPct}
+            onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, cachedPct: e.target.value } }))}
             className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
           />
           <button
-            onClick={savePublicModel}
+            onClick={() => savePublicModel()}
             disabled={pubBusy || !newPub.publicName.trim() || !newPub.comboId}
             className="rounded-md bg-primary px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
           >
@@ -507,7 +507,7 @@ export default function CustomersPage() {
                       {m.pricing ? (
                         <span>
                           {fmtRate(m.pricing.input)} / {fmtRate(m.pricing.output)}
-                          {m.pricing.cached !== undefined && <span className="text-text-muted"> · cached {fmtRate(m.pricing.cached)}</span>}
+                          {m.pricing.cachedPct !== undefined && <span className="text-text-muted"> · cached {m.pricing.cachedPct}%</span>}
                         </span>
                       ) : m.autoPricing && m.autoPricing.length > 0 ? (
                         <span className="text-text-muted">
@@ -574,9 +574,9 @@ export default function CustomersPage() {
                 className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
               />
               <input
-                type="number" step="0.01" min="0" placeholder="Cached $/1M (opt.)"
-                value={editingPub.pricing.cached}
-                onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, cached: e.target.value } }))}
+                type="number" step="1" min="0" max="100" placeholder="Cached % of input (opt.)"
+                value={editingPub.pricing.cachedPct}
+                onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, cachedPct: e.target.value } }))}
                 className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
               />
               <button

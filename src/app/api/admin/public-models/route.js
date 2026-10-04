@@ -110,7 +110,7 @@ export async function POST(request) {
     // Optional direct sell pricing { input, output, cached, ... } (USD/1M).
     // Only numeric fields are accepted — everything else is ignored.
     if (body?.pricing && typeof body.pricing === "object") {
-      const validFields = ["input", "output", "cached", "reasoning", "cache_creation"];
+      const validFields = ["input", "output", "cached", "cachedPct", "reasoning", "cache_creation"];
       const clean = {};
       for (const [k, v] of Object.entries(body.pricing)) {
         if (validFields.includes(k) && typeof v === "number" && Number.isFinite(v) && v >= 0) {

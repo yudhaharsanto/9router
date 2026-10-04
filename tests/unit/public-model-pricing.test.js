@@ -1,6 +1,5 @@
-// Public-model direct sell pricing (§3.6 follow-up): a published combo is
-// billed at the admin-set price for its public name, regardless of which
-// member served the request. Fallback stays member-model pricing.
+// Phase 6 + follow-ups: public model ↔ combo mapping, response masking, and
+// direct sell pricing per public model (incl. cached-as-percentage).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -85,5 +84,20 @@ describe("public model pricing", () => {
     );
     // member "gpt-x" unpriced → charge 0
     expect(result2.chargeMicros).toBe(0);
+  });
+
+  it("cached stored as % of input derives the absolute rate; legacy absolute still honored", async () => {
+    const repo = await import("@/lib/db/repos/pricingRepo.js");
+    const cp = await import("@/lib/billing/customerPricing.js");
+
+    // input 2, cachedPct 10 → cached rate 0.2
+    await repo.updatePublicPricing({ "pct-model": { input: 2, output: 8, cachedPct: 10 } });
+    const sell = await cp.getPublicSellPricing("pct-model");
+    expect(sell.cached).toBeCloseTo(0.2, 9);
+
+    // legacy absolute cached still honored when cachedPct absent
+    await repo.updatePublicPricing({ "abs-model": { input: 2, output: 8, cached: 0.5 } });
+    const sell2 = await cp.getPublicSellPricing("abs-model");
+    expect(sell2.cached).toBe(0.5);
   });
 });

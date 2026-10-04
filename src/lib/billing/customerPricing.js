@@ -61,10 +61,15 @@ export async function getPublicSellPricing(publicName) {
   const table = await getPublicPricing();
   const entry = table[publicName];
   if (!entry || typeof entry !== "object") return null;
+  // Cached may be stored as a percentage of the input rate (cachedPct, 0–100)
+  // or as a legacy absolute $/1M rate (cached); percentage wins when present.
+  const cachedRate = entry.cachedPct !== undefined && entry.cachedPct !== null
+    ? ((entry.input ?? 0) * Number(entry.cachedPct)) / 100
+    : (entry.cached ?? entry.input ?? 0);
   return {
     input: entry.input ?? 0,
     output: entry.output ?? 0,
-    cached: entry.cached ?? entry.input ?? 0,
+    cached: cachedRate,
     cache_creation: entry.cache_creation ?? 0,
     reasoning: entry.reasoning ?? entry.output ?? 0,
     discountRate: 0, // direct price, not discounted

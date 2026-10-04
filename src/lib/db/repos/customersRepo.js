@@ -58,3 +58,34 @@ export async function setCustomerStatus(id, status) {
   const db = await getAdapter();
   db.run(`UPDATE customers SET status = ?, updatedAt = ? WHERE id = ?`, [status, new Date().toISOString(), id]);
 }
+
+// Admin list (phase 5c): every customer joined with balance, active key mask,
+// and total topup credits. Aggregates computed in SQL; no key hashes leave here.
+export async function listCustomersWithDetails() {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT c.id, c.email, c.name, c.status, c.createdAt, c.updatedAt,
+            COALESCE(b.balanceMicros, 0) AS balanceMicros,
+            COALESCE(b.reservedMicros, 0) AS reservedMicros,
+            COALESCE(SUM(CASE WHEN l.type = 'topup_credit' THEN l.amountMicros END), 0) AS totalTopupMicros,
+            k.keyMask AS keyMask
+       FROM customers c
+       LEFT JOIN customerBalances b ON b.customerId = c.id
+       LEFT JOIN ledger l ON l.customerId = c.id
+       LEFT JOIN customerKeys k ON k.customerId = c.id AND k.revokedAt IS NULL
+      GROUP BY c.id
+      ORDER BY c.createdAt DESC`
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email || null,
+    name: r.name || null,
+    status: r.status || "active",
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    balanceMicros: Number(r.balanceMicros),
+    reservedMicros: Number(r.reservedMicros),
+    totalTopupMicros: Number(r.totalTopupMicros),
+    keyMask: r.keyMask || null,
+  }));
+}

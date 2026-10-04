@@ -455,13 +455,13 @@ export default function CustomersPage() {
             ))}
           </select>
           <input
-            type="number" step="0.01" min="0" placeholder="Sell $/1M input"
+            type="number" step="0.01" min="0" placeholder="Official $/1M input"
             value={newPub.pricing.input}
             onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, input: e.target.value } }))}
             className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
           />
           <input
-            type="number" step="0.01" min="0" placeholder="Sell $/1M output"
+            type="number" step="0.01" min="0" placeholder="Official $/1M output"
             value={newPub.pricing.output}
             onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, output: e.target.value } }))}
             className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
@@ -486,7 +486,7 @@ export default function CustomersPage() {
               <tr>
                 <th className="px-6 py-3">Public Name</th>
                 <th className="px-6 py-3">Combo</th>
-                <th className="px-6 py-3">Sell Price $/1M (in / out)</th>
+                <th className="px-6 py-3">Price $/1M in / out (official → customer)</th>
                 <th className="px-6 py-3">Status</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
@@ -507,6 +507,7 @@ export default function CustomersPage() {
                       {m.pricing ? (
                         <span>
                           {fmtRate(m.pricing.input)} / {fmtRate(m.pricing.output)}
+                          <span className="text-text-muted"> → {fmtRate((m.pricing.input ?? 0) * sellFactor)} / {fmtRate((m.pricing.output ?? 0) * sellFactor)}</span>
                           {m.pricing.cachedPct !== undefined && <span className="text-text-muted"> · cached {m.pricing.cachedPct}%</span>}
                         </span>
                       ) : m.autoPricing && m.autoPricing.length > 0 ? (
@@ -562,13 +563,13 @@ export default function CustomersPage() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
               <span className="text-sm font-medium font-mono">{editingPub.publicName}</span>
               <input
-                type="number" step="0.01" min="0" placeholder="Sell $/1M input"
+                type="number" step="0.01" min="0" placeholder="Official $/1M input"
                 value={editingPub.pricing.input}
                 onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, input: e.target.value } }))}
                 className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
               />
               <input
-                type="number" step="0.01" min="0" placeholder="Sell $/1M output"
+                type="number" step="0.01" min="0" placeholder="Official $/1M output"
                 value={editingPub.pricing.output}
                 onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, output: e.target.value } }))}
                 className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"

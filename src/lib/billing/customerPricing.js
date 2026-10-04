@@ -52,26 +52,36 @@ export function estimateCostMicros(tokens, sellPricing) {
   return Math.round(micros);
 }
 
-// Direct sell price for a public model name: the admin-set price, verbatim
-// (no discount scaling). Null when the public model has no custom pricing —
-// callers fall back to member-model pricing.
+// Direct sell price for a public model name. The admin-entered price is the
+// OFFICIAL (pre-discount) price — the customer is billed official ×
+// (1 − discountRate), same as member models. Null when the public model has
+// no custom pricing — callers fall back to member-model pricing.
 export async function getPublicSellPricing(publicName) {
   if (!publicName) return null;
   const { getPublicPricing } = await import("@/lib/db/repos/pricingRepo.js");
   const table = await getPublicPricing();
   const entry = table[publicName];
   if (!entry || typeof entry !== "object") return null;
-  // Cached may be stored as a percentage of the input rate (cachedPct, 0–100)
-  // or as a legacy absolute $/1M rate (cached); percentage wins when present.
-  const cachedRate = entry.cachedPct !== undefined && entry.cachedPct !== null
-    ? ((entry.input ?? 0) * Number(entry.cachedPct)) / 100
+  const discount = await getDiscountRate();
+  const factor = 1 - discount;
+  // cachedPct is % of the (official) input rate; carried through unscaled so
+  // the customer's cached rate is that % of their discounted input. Legacy
+  // absolute cached ($/1M) discounts like every other rate.
+  const cachedPct = entry.cachedPct !== undefined && entry.cachedPct !== null
+    ? Number(entry.cachedPct)
+    : null;
+  const officialCached = cachedPct !== null && Number.isFinite(cachedPct)
+    ? null
     : (entry.cached ?? entry.input ?? 0);
   return {
-    input: entry.input ?? 0,
-    output: entry.output ?? 0,
-    cached: cachedRate,
-    cache_creation: entry.cache_creation ?? 0,
-    reasoning: entry.reasoning ?? entry.output ?? 0,
-    discountRate: 0, // direct price, not discounted
+    input: (entry.input ?? 0) * factor,
+    output: (entry.output ?? 0) * factor,
+    cached: cachedPct !== null && Number.isFinite(cachedPct)
+      ? ((entry.input ?? 0) * factor) * (cachedPct / 100)
+      : officialCached * factor,
+    cache_creation: (entry.cache_creation ?? 0) * factor,
+    reasoning: (entry.reasoning ?? entry.output ?? 0) * factor,
+    discountRate: discount,
+    official: { input: entry.input ?? 0, output: entry.output ?? 0, cachedPct },
   };
 }

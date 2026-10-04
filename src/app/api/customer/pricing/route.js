@@ -17,7 +17,8 @@ function cachedPctOf(pricing) {
 }
 
 // GET /api/customer/pricing — what this customer pays per public model.
-// Direct-priced rows: admin's price verbatim (no discount), no official shown.
+// Direct-priced rows: admin-entered price is OFFICIAL (pre-discount);
+// customer pays official × (1 − discountRate) like any other model.
 // Auto rows: official member price × (1 − discountRate), per combo member.
 // Combo IDs and provider names never appear in the response.
 export async function GET(request) {
@@ -40,10 +41,10 @@ export async function GET(request) {
       const output = direct.output ?? 0;
       return {
         name: m.publicName,
-        official: null,
+        official: { input, output, cachedPct: direct.cachedPct ?? null },
         sell: {
-          input,
-          output,
+          input: input * factor,
+          output: output * factor,
           cachedPct: direct.cachedPct ?? null,
         },
       };

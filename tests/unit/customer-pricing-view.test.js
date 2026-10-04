@@ -85,10 +85,12 @@ describe("GET /api/customer/pricing", () => {
 
     const direct = body.items.find((m) => m.name === "pub-direct");
     expect(direct).toBeTruthy();
-    expect(direct.sell.input).toBe(1); // verbatim, no discount
-    expect(direct.sell.output).toBe(3);
+    // admin-entered price is OFFICIAL; customer pays official × (1 − 0.5)
+    expect(direct.official.input).toBe(1);
+    expect(direct.official.output).toBe(3);
+    expect(direct.sell.input).toBeCloseTo(0.5, 6);
+    expect(direct.sell.output).toBeCloseTo(1.5, 6);
     expect(direct.sell.cachedPct).toBeCloseTo(15, 6);
-    expect(direct.official).toBeNull();
     expect(JSON.stringify(direct)).not.toContain("combo-direct");
   });
 });

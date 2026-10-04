@@ -57,8 +57,8 @@ export async function settleCustomerUsage(customerId, holdRefId, provider, model
   let chargeMicros = pricing ? estimateCostMicros(tokens, pricing) : 0;
   const minCharge = Math.max(0, Math.round(Number(settings.minimumChargeMicros) || 0));
   if (chargeMicros > 0 && chargeMicros < minCharge) chargeMicros = minCharge;
-  const official = publicName && pricing
-    ? pricing // direct public price: charge basis == official basis, margin 0
+  const official = publicName && pricing?.official
+    ? pricing.official // admin-entered official rates from getPublicSellPricing
     : await getPricingForModel(provider, model);
   const officialCostMicros = official ? estimateCostMicros(tokens, official) : 0;
   const result = await settleUsage(customerId, holdRefId, chargeMicros, {

@@ -789,8 +789,10 @@ function UsageRow({ r }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-text-muted">Official</div>
-            <div className="text-text-main tabular-nums">{fmtMoney(r.cost)}</div>
+            <div className="text-text-muted">Billed</div>
+            <div className="text-text-main tabular-nums">
+              {r.chargedMicros != null ? fmtMoney(r.chargedMicros) : fmtMoney(r.cost)}
+            </div>
           </div>
           <div className={`text-right w-12 ${r.status && r.status !== "ok" ? "text-red-500" : ""}`}>
             <div className="text-text-muted">Status</div>
@@ -804,6 +806,7 @@ function UsageRow({ r }) {
 
 function LedgerCard() {
   const [items, setItems] = useState(null);
+  const [tab, setTab] = useState("all");
 
   useEffect(() => {
     fetch("/api/customer/ledger?limit=50", { headers: { "Cache-Control": "no-store" } })
@@ -812,20 +815,46 @@ function LedgerCard() {
       .catch(() => setItems([]));
   }, []);
 
+  // Tabs collapse the noise: customers read top-ups and usage; reserve
+  // hold/release pairs are internal plumbing of a single request.
+  const TABS = [
+    { id: "all", label: "All" },
+    { id: "topup_credit", label: "Top-ups" },
+    { id: "usage_debit", label: "Usage" },
+    { id: "adjustment", label: "Adjustments" },
+  ];
+  const filtered = (items || []).filter((e) => (tab === "all" ? true : e.type === tab));
+
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
       <span className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">
         Ledger
       </span>
+      <div className="flex gap-1 flex-wrap">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+              tab === t.id
+                ? "bg-brand-500/10 border-brand-500/40 text-text-main font-medium"
+                : "border-border-subtle text-text-muted hover:text-text-main"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
       {items === null ? (
         <div className="h-20 rounded-lg bg-surface-2 animate-pulse" />
-      ) : items.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="h-20 rounded-lg border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
-          No transactions yet.
+          No transactions here.
         </div>
       ) : (
         <div className="max-h-80 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle/60">
-          {items.map((e, i) => {
+          {filtered.map((e, i) => {
             const amt = Number(e.amountMicros) || 0;
             const pos = amt > 0;
             return (

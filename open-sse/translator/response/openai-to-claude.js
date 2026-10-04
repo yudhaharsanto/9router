@@ -119,6 +119,9 @@ export function openaiToClaudeResponse(chunk, state) {
         `msg_${Date.now()}`;
     }
     state.model = chunk.model || MODEL_FALLBACK;
+    // Public model masking (spec 3.6): the client-visible model is the public
+    // name, never the upstream one. Passed via state.maskModel from the stream.
+    if (state.maskModel) state.model = state.maskModel;
     state.nextBlockIndex = 0;
     results.push({
       type: "message_start",

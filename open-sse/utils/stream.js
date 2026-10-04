@@ -74,7 +74,7 @@ export function createSSEStream(options = {}) {
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
   const state = mode === STREAM_MODE.TRANSLATE
-    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model, sessionId: credentials?._clientSessionId || null,
+    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model, sessionId: credentials?._clientSessionId || null, maskModel,
         // Which upstream format this stream came from. A response translator can be
         // reached either directly (target === its registered source) or as the second
         // hop of a pivot, and on the terminal null chunk the pivot drops it — so a
@@ -261,6 +261,10 @@ export function createSSEStream(options = {}) {
 
               responsesTerminal = isOpenAIResponsesTerminalEvent(currentOpenAIResponsesEvent, parsed);
 
+              // Public model masking (spec 3.6): only re-serialized chunks carry
+              // the rewritten name; untouched lines keep their raw bytes.
+              if (maskModel && parsed && typeof parsed === "object") parsed.model = maskModel;
+
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
@@ -285,7 +289,8 @@ export function createSSEStream(options = {}) {
             }
           }
 
-          if (maskModel && parsed && typeof parsed === "object") parsed.model = maskModel;
+          // Public model masking (spec §3.6): rewrite only re-serialized chunks;
+          // untouched passthrough lines keep their raw bytes.
           if (!injectedUsage) {
             if (line.startsWith("data:") && !line.startsWith("data: ")) {
               output = "data: " + line.slice(5) + "\n";

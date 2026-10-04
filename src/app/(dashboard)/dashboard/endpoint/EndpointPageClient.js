@@ -75,7 +75,6 @@ export default function APIPageClient({ machineId }) {
 
   // Token-limit related settings
   const [usageLookupToken, setUsageLookupToken] = useState("");
-  const [usageLookupPassword, setUsageLookupPassword] = useState("");
   const [excludedProviders, setExcludedProviders] = useState([]);
   const [customNodes, setCustomNodes] = useState([]);
   const [provDropdownOpen, setProvDropdownOpen] = useState(false);
@@ -352,7 +351,6 @@ export default function APIPageClient({ machineId }) {
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
         setUsageLookupToken(data.usageLookupToken || "");
-        setUsageLookupPassword(data.usageLookupPassword || "");
         setExcludedProviders(
           Array.isArray(data.tokenLimitExcludedProviders)
             ? data.tokenLimitExcludedProviders
@@ -1105,7 +1103,6 @@ export default function APIPageClient({ machineId }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           usageLookupToken: usageLookupToken.trim(),
-          usageLookupPassword: usageLookupPassword,
           tokenLimitExcludedProviders: excludedProviders,
         }),
       });
@@ -1774,41 +1771,10 @@ export default function APIPageClient({ machineId }) {
         <div className="mb-4">
           <h3 className="text-sm font-semibold">Token Limit Settings</h3>
           <p className="text-xs text-text-muted mt-0.5">
-            Configure public usage lookup and providers excluded from token
-            counting.
+            Configure providers excluded from token counting.
           </p>
         </div>
         <div className="flex flex-col gap-4">
-          <div className="rounded-[10px] bg-surface-2/60 p-3 flex flex-col gap-2">
-            <p className="text-sm font-medium">Public usage lookup</p>
-            <p className="text-xs text-text-muted">
-              Anyone can check a key&apos;s usage at{" "}
-              <code className="bg-surface-2 px-1 rounded">/usage-check</code> by
-              entering the API key name and the lookup password below. Leave the
-              password empty to disable the page.
-            </p>
-            <Input
-              label="Usage lookup password"
-              type="text"
-              value={usageLookupPassword}
-              onChange={(e) => setUsageLookupPassword(e.target.value)}
-              placeholder="Empty = disabled"
-              hint="Separate from the admin login password. Required to open /usage-check."
-            />
-            {usageLookupPassword.trim() && (
-              <a
-                href="/usage-check"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                <span className="material-symbols-outlined text-[14px]">
-                  open_in_new
-                </span>
-                Open usage lookup page
-              </a>
-            )}
-          </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-main">
               Providers excluded from token counting

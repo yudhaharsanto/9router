@@ -192,11 +192,22 @@ describe("POST /api/customer/topup", () => {
     const token = await sessionFor(c);
 
     vi.stubGlobal("fetch", vi.fn(async (url, opts) => {
-      expect(String(url)).toContain("tako.id/api/v1/topup/");
+      expect(String(url)).toContain("tako.id/api/v1/gift/");
+      const sent = JSON.parse(opts.body);
+      expect(sent.paymentMethod).toBe("qris"); // QRIS only, per Tako docs
+      expect(sent.amount).toBe(100_000);
       return {
         ok: true,
-        status: 200,
-        json: async () => ({ paymentUrl: "https://tako.id/pay/abc", transactionId: "topup-tx-1" }),
+        status: 206,
+        json: async () => ({
+          statusCode: 206,
+          result: {
+            success: true,
+            giftId: "gift-abc",
+            transactionId: "topup-tx-1",
+            paymentUrl: "https://tako.id/pay/abc",
+          },
+        }),
       };
     }));
 

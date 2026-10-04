@@ -45,7 +45,10 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const txnId = String(payload.transactionId || "").trim();
+  // Real Tako callback shape (docs): { event: "payment.success",
+  // data: { id, status, amount, paymentMethod, ... } }. Accept the flat
+  // { transactionId } shape too so replayed/older events still process.
+  const txnId = String(payload?.data?.id || payload?.transactionId || "").trim();
   if (!txnId) return NextResponse.json({ error: "Missing transactionId" }, { status: 400 });
 
   // Persist before crediting — replay-safe (unique constraint), duplicate

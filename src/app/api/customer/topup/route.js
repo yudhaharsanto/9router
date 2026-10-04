@@ -2,13 +2,20 @@ import { NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/auth/customerSession.js";
 import { createTopup, setTopupPayment, computeCreditedMicros } from "@/lib/db/repos/topupsRepo.js";
 import { getSettings } from "@/lib/db/repos/settingsRepo.js";
+import { getCustomerById } from "@/lib/db/repos/customersRepo.js";
 
 export const dynamic = "force-dynamic";
 
 // POST /api/customer/topup { amountIdr } — session-gated Tako top-up creation
 // (spec §3.3). Rate snapshot comes from settings (idrPerUsd); without a valid
 // rate creation is blocked — never guess. The merchant key is server-only.
-const TAKO_TOPUP_URL = (username) => `https://tako.id/api/v1/topup/${encodeURIComponent(username)}`;
+//
+// Tako gift API (docs: tako.id/api-docs#mengirim-hadiah): a "gift" is a payment
+// request to the merchant account — the customer pays the merchant's QRIS, and
+// the payment.success callback (or reconciliation) credits the topup row.
+// QRIS is the only method the API offers here; balance payment is not
+// available to API keys.
+const TAKO_GIFT_URL = (username) => `https://tako.id/api/v1/gift/${encodeURIComponent(username)}`;
 
 export async function POST(request) {
   const session = await requireCustomerSession(request);
@@ -33,6 +40,8 @@ export async function POST(request) {
   }
   const rateMilli = Math.round(ratePerUsd * 1000);
 
+  const customer = await getCustomerById(session.customerId);
+
   // Rate snapshot is locked at creation; the credit amount is precomputed and
   // later rate changes never re-write it (spec §3.4).
   const topup = await createTopup({ customerId: session.customerId, amountIdr, rateMilli });
@@ -46,12 +55,12 @@ export async function POST(request) {
     return NextResponse.json({
       topup,
       manual: true,
-      message: "Pembayaran online belum tersedia. Top-up tercatat — hubungi admin untuk menyelesaikannya.",
+      message: "Online payment is not available yet. Your top-up has been recorded — contact the admin to complete it.",
     });
   }
 
   try {
-    const res = await fetch(TAKO_TOPUP_URL(username), {
+    const res = await fetch(TAKO_GIFT_URL(username), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${merchantKey}`,
@@ -59,23 +68,27 @@ export async function POST(request) {
         "User-Agent": "9router/1.0",
       },
       body: JSON.stringify({
+        // Gift fields (docs): sender identity + amount + method.
+        name: customer?.name || customer?.email?.split("@")[0] || "9Router customer",
+        email: customer?.email || undefined,
         amount: amountIdr,
+        paymentMethod: "qris",
         // echo our row id so callbacks/reconciliation can be correlated
-        refId: topup.id,
-        expectedCreditMicros: computeCreditedMicros(amountIdr, rateMilli),
+        message: `9router topup ${topup.id}`,
       }),
       signal: AbortSignal.timeout(15_000),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.transactionId) {
+    const result = data?.result || data;
+    if (!res.ok || !result?.transactionId) {
       throw new Error(`tako responded ${res.status}`);
     }
     await setTopupPayment(topup.id, {
-      takoTxnId: String(data.transactionId),
-      paymentUrl: data.paymentUrl ? String(data.paymentUrl) : null,
+      takoTxnId: String(result.transactionId),
+      paymentUrl: result.paymentUrl ? String(result.paymentUrl) : null,
     });
     return NextResponse.json({
-      topup: { ...topup, takoTxnId: String(data.transactionId), paymentUrl: data.paymentUrl || null },
+      topup: { ...topup, takoTxnId: String(result.transactionId), paymentUrl: result.paymentUrl || null },
     });
   } catch (err) {
     return NextResponse.json(

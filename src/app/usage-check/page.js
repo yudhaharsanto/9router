@@ -291,9 +291,18 @@ function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
   );
 }
 
-// ── Harga model publish: official → harga customer (setelah diskon) → cache % ──
+// ── Published model prices: official → customer price (after discount) → cache % ──
+const PRICE_SORTS = {
+  name: (m) => m.name,
+  official: (m) => (m.official ? m.official.input + m.official.output : -1),
+  price: (m) => m.sell.input + m.sell.output,
+  cache: (m) => (m.sell.cachedPct != null ? m.sell.cachedPct : -1),
+};
+
 function PublicModelsCard() {
   const [items, setItems] = useState(null);
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
 
   useEffect(() => {
     let cancelled = false;
@@ -306,34 +315,66 @@ function PublicModelsCard() {
     };
   }, []);
 
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const sorted = (() => {
+    if (!items) return null;
+    const get = PRICE_SORTS[sortKey] || PRICE_SORTS.name;
+    const arr = [...items].sort((a, b) => {
+      const va = get(a);
+      const vb = get(b);
+      if (typeof va === "string" || typeof vb === "string") {
+        return String(va).localeCompare(String(vb));
+      }
+      return va - vb;
+    });
+    if (sortDir === "desc") arr.reverse();
+    return arr;
+  })();
+
+  const arrow = (key) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+
   return (
     <Card>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-primary">Price Model</h3>
-        <span className="text-[11px] text-text-muted">USD per 1M token</span>
+        <h3 className="text-sm font-semibold text-primary">Model Pricing</h3>
+        <span className="text-[11px] text-text-muted">USD per 1M token · click a column to sort</span>
       </div>
-      {items === null ? (
-        <div className="text-xs text-text-muted py-4 text-center">Memuat…</div>
-      ) : items.length === 0 ? (
+      {sorted === null ? (
+        <div className="text-xs text-text-muted py-4 text-center">Loading…</div>
+      ) : sorted.length === 0 ? (
         <div className="text-xs text-text-muted py-4 text-center">
-          Belum ada model yang dipublikasikan.
+          No published models yet.
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-text-muted border-b border-border-subtle">
-                <th className="py-2 pr-3 font-medium">Model</th>
-                <th className="py-2 pr-3 font-medium text-right">Official</th>
-                <th className="py-2 pr-3 font-medium text-right">Price</th>
-                <th className="py-2 font-medium text-right">Cache</th>
+                {[
+                  ["name", "Model", ""],
+                  ["official", "Official", "pr-3 text-right"],
+                  ["price", "Price", "pr-3 text-right"],
+                  ["cache", "Cache", "text-right"],
+                ].map(([key, label, extra]) => (
+                  <th key={key} className={`py-2 font-medium cursor-pointer select-none hover:text-text-main ${extra || ""}`} onClick={() => toggleSort(key)}>
+                    {label}
+                    {arrow(key)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle/50">
-              {items.map((m) => (
+              {sorted.map((m) => (
                 <tr key={m.name} className="hover:bg-surface-2/50 transition-colors">
                   <td className="py-2 pr-3">
-                    <CopyBtn value={m.name} title="Copy nama model" />
+                    <CopyBtn value={m.name} title="Copy model name" />
                     <code className="ml-1.5 font-mono text-text-main">{m.name}</code>
                   </td>
                   <td className="py-2 pr-3 text-right text-text-muted tabular-nums">
@@ -370,10 +411,10 @@ function fmtRate(n) {
 const TOPUP_AMOUNTS_IDR = [10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
 
 const TOPUP_STATUS_LABEL = {
-  pending: "Menunggu pembayaran",
-  paid: "Berhasil",
-  failed: "Gagal",
-  expired: "Kedaluwarsa",
+  pending: "Awaiting payment",
+  paid: "Paid",
+  failed: "Failed",
+  expired: "Expired",
 };
 
 function TopUpCard() {
@@ -409,7 +450,7 @@ function TopUpCard() {
   const startTopup = async () => {
     const amountIdr = effectiveAmount();
     if (!Number.isInteger(amountIdr) || amountIdr < 10_000) {
-      setError("Nominal minimal Rp 10.000.");
+      setError("Minimum amount is Rp 10,000.");
       return;
     }
     setBusy(true);
@@ -424,18 +465,18 @@ function TopUpCard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || `Gagal (${res.status})`);
+        setError(data.error || `Failed (${res.status})`);
       } else if (data.manual) {
         // No online payment configured server-side; the request is recorded
         // pending and the customer contacts the admin to settle it.
-        setNotice(data.message || "Top-up tercatat — hubungi admin.");
+        setNotice(data.message || "Top-up recorded — contact the admin.");
         setAmount(amountIdr);
         loadHistory();
       } else {
         setPaymentUrl(data.topup?.paymentUrl || null);
         loadHistory();
         if (!data.topup?.paymentUrl) {
-          setNotice("Top-up dibuat. Menunggu konfirmasi pembayaran.");
+          setNotice("Top-up created. Awaiting payment confirmation.");
         }
       }
     } catch (err) {
@@ -467,7 +508,7 @@ function TopUpCard() {
             ))}
           </div>
           <label className="flex items-center gap-2 mt-2 text-[11px] text-text-muted">
-            Atau isi sendiri:
+            Or enter a custom amount:
             <input
               type="number"
               min={10_000}
@@ -483,7 +524,7 @@ function TopUpCard() {
       </div>
       <div className="flex items-center gap-3 flex-wrap">
         <Button onClick={startTopup} disabled={busy} size="sm">
-          {busy ? "Memproses…" : "Buat Pembayaran"}
+          {busy ? "Processing…" : "Create Payment"}
         </Button>
         {paymentUrl && (
           <a
@@ -500,8 +541,8 @@ function TopUpCard() {
       {notice && <p className="text-xs text-text-muted">{notice}</p>}
       {Array.isArray(history) && history.length > 0 && (
         <div className="pt-2 border-t border-border-subtle">
-          <div className="text-[11px] font-medium text-text-muted mb-1.5">Riwayat top-up</div>
-          <ul className="space-y-1">
+          <div className="text-[11px] font-medium text-text-muted mb-1.5">Top-up history</div>
+          <ul className="space-y-1 max-h-30 overflow-y-auto pr-1">
             {history.map((t) => (
               <li key={t.id} className="flex items-center justify-between text-xs">
                 <span className="text-text-main tabular-nums">
@@ -561,7 +602,6 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
       ) : (
         <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
           <code className="text-xs flex-1 truncate font-mono">{mask || "—"}</code>
-          <CopyBtn value={mask || ""} title="Copy mask (not usable as a key)" />
         </div>
       )}
       {plaintext ? (

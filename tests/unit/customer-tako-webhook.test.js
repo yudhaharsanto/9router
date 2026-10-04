@@ -55,33 +55,50 @@ async function makePaidTopup(takoTxnId, amountIdr = 100_000) {
   return topup;
 }
 
+// Real Tako callback shape (docs): { event, data: { id, status, amount, ... } }
+function takoPayload(txnId, { amount = 50_000 } = {}) {
+  return {
+    event: "payment.success",
+    data: {
+      id: txnId,
+      status: "success",
+      amount,
+      price: amount,
+      paymentMethod: "qris",
+      paymentUrl: `https://tako.id/pay/${txnId}`,
+      createdAt: "2026-07-02T10:30:00.000Z",
+      relatedGiftId: null,
+    },
+  };
+}
+
 describe("POST /api/customer/webhooks/tako", () => {
   it("401 without a signature header", async () => {
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
-    const res = await mod.POST(hookRequest({ transactionId: "tx-1" }, undefined));
+    const res = await mod.POST(hookRequest(takoPayload("tx-1"), undefined));
     expect(res.status).toBe(401);
   });
 
   it("401 on a wrong signature (timing-safe reject)", async () => {
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
     const res = await mod.POST(
-      hookRequest({ transactionId: "tx-2" }, "deadbeef".repeat(8)),
+      hookRequest(takoPayload("tx-2"), "deadbeef".repeat(8)),
     );
     expect(res.status).toBe(401);
   });
 
   it("401 on a signature computed with the wrong key", async () => {
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
-    const body = JSON.stringify({ transactionId: "tx-3" });
-    const badSig = crypto.createHmac("sha256", "wrong-key").update(body).digest("hex");
-    const res = await mod.POST(hookRequest(body, badSig));
+    const raw = JSON.stringify(takoPayload("tx-3"));
+    const badSig = crypto.createHmac("sha256", "wrong-key").update(raw).digest("hex");
+    const res = await mod.POST(hookRequest(raw, badSig));
     expect(res.status).toBe(401);
   });
 
   it("credits a valid signed callback and returns 200 after persist", async () => {
     const topup = await makePaidTopup("tx-ok");
     const before = await db.getBalance(topup.customerId);
-    const payload = { transactionId: "tx-ok", status: "paid", amount: topup.amountIdr };
+    const payload = takoPayload("tx-ok", { amount: topup.amountIdr });
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
     const res = await mod.POST(hookRequest(payload, sign(JSON.stringify(payload))));
     expect(res.status).toBe(200);
@@ -93,7 +110,7 @@ describe("POST /api/customer/webhooks/tako", () => {
 
   it("replays are idempotent — same txn twice credits once, still 200", async () => {
     await makePaidTopup("tx-replay");
-    const payload = { transactionId: "tx-replay", status: "paid" };
+    const payload = takoPayload("tx-replay");
     const raw = JSON.stringify(payload);
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
     const res1 = await mod.POST(hookRequest(payload, sign(raw)));
@@ -109,7 +126,7 @@ describe("POST /api/customer/webhooks/tako", () => {
   });
 
   it("unknown transactionId still persists the event (unprocessed) and returns 500", async () => {
-    const payload = { transactionId: "tx-ghost", status: "paid" };
+    const payload = takoPayload("tx-ghost");
     const mod = await import("@/app/api/customer/webhooks/tako/route.js");
     const res = await mod.POST(hookRequest(payload, sign(JSON.stringify(payload))));
     expect(res.status).toBe(500);

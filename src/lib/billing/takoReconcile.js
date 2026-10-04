@@ -22,8 +22,10 @@ async function fetchTakoStatus(txnId) {
     });
     if (!res.ok) return null;
     const body = await res.json().catch(() => null);
-    const status = body?.status ?? body?.data?.status;
-    return typeof status === "string" ? status.toLowerCase() : null;
+    // Tako wraps in { statusCode, result: {...} }; success is "success".
+    const status = body?.result?.status ?? body?.status ?? body?.data?.status;
+    const norm = typeof status === "string" ? status.toLowerCase() : null;
+    return norm === "success" ? "paid" : norm;
   } catch {
     return null;
   }

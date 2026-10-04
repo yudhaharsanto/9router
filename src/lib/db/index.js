@@ -61,6 +61,13 @@ export {
 export {
   getBalance, creditCustomer, holdReserve, settleUsage, adjustBalance, getLedger, MICROS_PER_USD,
 } from "./repos/ledgerRepo.js";
+export {
+  createTopup, setTopupPayment, getTopupById, getTopupByTakoTxnId,
+  listTopups, markTopupPaid, applyTopupCredit, computeCreditedMicros,
+} from "./repos/topupsRepo.js";
+export {
+  recordWebhookEvent, markWebhookProcessed, getUnprocessedWebhookEvents,
+} from "./repos/webhookEventsRepo.js";
 
 // Disabled models
 export {

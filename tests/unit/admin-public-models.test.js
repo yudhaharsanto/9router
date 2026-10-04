@@ -94,4 +94,38 @@ describe("/api/admin/public-models", () => {
     const list = await (await mod.GET(req())).json();
     expect(list.publicModels.find((m) => m.publicName === "glm-pro")).toBeUndefined();
   });
+
+  it("GET includes autoPricing for rows without direct pricing (official × (1 − discount))", async () => {
+    const pricing = await import("@/lib/db/repos/pricingRepo.js");
+    const settings = await import("@/lib/db/repos/settingsRepo.js");
+    // Member model official price: input 4, output 20 → at discount 0.5: 2 / 10
+    await pricing.updatePricing({ openai: { "auto-price-model": { input: 4, output: 20, cached: 0.4, reasoning: 20 } } });
+    await settings.updateSettings({ discountRate: 0.5 });
+    vi.resetModules();
+
+    const combos = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await combos.createCombo({ name: "internal-pub-combo-3", models: ["openai/auto-price-model"] });
+    const mod = await import("@/app/api/admin/public-models/route.js");
+    await mod.POST(req("POST", { publicName: "auto-priced", comboId: combo.id, enabled: true }));
+
+    const list = await (await mod.GET(req())).json();
+    const row = list.publicModels.find((m) => m.publicName === "auto-priced");
+    expect(row.pricing).toBeNull();
+    expect(Array.isArray(row.autoPricing)).toBe(true);
+    const member = row.autoPricing.find((a) => a.model === "auto-price-model");
+    expect(member).toBeTruthy();
+    expect(member.sellInput).toBeCloseTo(2, 6);
+    expect(member.sellOutput).toBeCloseTo(10, 6);
+
+    // Direct-priced rows don't get autoPricing
+    const direct = await mod.POST(req("POST", {
+      publicName: "direct-priced", comboId: combo.id, enabled: true,
+      pricing: { input: 1, output: 5 },
+    }));
+    expect(direct.status).toBe(200);
+    const list2 = await (await mod.GET(req())).json();
+    const row2 = list2.publicModels.find((m) => m.publicName === "direct-priced");
+    expect(row2.pricing.input).toBe(1);
+    expect(row2.autoPricing).toBeUndefined();
+  });
 });

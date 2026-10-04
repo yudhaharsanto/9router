@@ -77,7 +77,8 @@ export default function CustomersPage() {
   // Public model ↔ combo mapping (spec §3.6)
   const [publicModels, setPublicModels] = useState(null);
   const [comboOptions, setComboOptions] = useState([]);
-  const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "" } });
+  const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
+  const [editingPub, setEditingPub] = useState(null);
   const [pubBusy, setPubBusy] = useState(false);
 
   useEffect(() => {
@@ -182,18 +183,20 @@ export default function CustomersPage() {
     }
   };
 
-  const savePublicModel = async () => {
+  const savePublicModel = async (override = null) => {
+    const form = override || newPub;
     setPubBusy(true);
     try {
       const pricing = {};
-      if (newPub.pricing.input !== "") pricing.input = Number(newPub.pricing.input);
-      if (newPub.pricing.output !== "") pricing.output = Number(newPub.pricing.output);
+      for (const k of ["input", "output", "cached"]) {
+        if (form.pricing[k] !== "" && form.pricing[k] !== undefined) pricing[k] = Number(form.pricing[k]);
+      }
       const res = await fetch("/api/admin/public-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          publicName: newPub.publicName.trim(),
-          comboId: newPub.comboId,
+          publicName: form.publicName.trim(),
+          comboId: form.comboId,
           enabled: true,
           ...(Object.keys(pricing).length > 0 ? { pricing } : {}),
         }),
@@ -202,13 +205,27 @@ export default function CustomersPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "" } });
+      setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
+      setEditingPub(null);
       await reloadPublicModels();
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
       setPubBusy(false);
     }
+  };
+
+  const startEditPublicModel = (m) => {
+    setEditingPub({
+      publicName: m.publicName,
+      comboId: m.comboId,
+      pricing: {
+        input: m.pricing?.input !== undefined && m.pricing?.input !== null ? String(m.pricing.input) : "",
+        output: m.pricing?.output !== undefined && m.pricing?.output !== null ? String(m.pricing.output) : "",
+        cached: m.pricing?.cached !== undefined && m.pricing?.cached !== null ? String(m.pricing.cached) : "",
+      },
+    });
+    setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cached: "" } });
   };
 
   const togglePublicModel = async (m) => {
@@ -441,13 +458,19 @@ export default function CustomersPage() {
             type="number" step="0.01" min="0" placeholder="Sell $/1M input"
             value={newPub.pricing.input}
             onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, input: e.target.value } }))}
-            className="w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+            className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
           />
           <input
             type="number" step="0.01" min="0" placeholder="Sell $/1M output"
             value={newPub.pricing.output}
             onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, output: e.target.value } }))}
-            className="w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+            className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
+            type="number" step="0.01" min="0" placeholder="Cached $/1M (opt.)"
+            value={newPub.pricing.cached}
+            onChange={(e) => setNewPub((s) => ({ ...s, pricing: { ...s.pricing, cached: e.target.value } }))}
+            className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
           />
           <button
             onClick={savePublicModel}
@@ -481,15 +504,37 @@ export default function CustomersPage() {
                     <td className="px-6 py-3 font-mono text-xs">{m.publicName}</td>
                     <td className="px-6 py-3">{m.comboName}</td>
                     <td className="px-6 py-3 font-mono text-xs">
-                      {m.pricing
-                        ? `${fmtRate(m.pricing.input)} / ${fmtRate(m.pricing.output)}`
-                        : <span className="text-text-muted">member price</span>}
+                      {m.pricing ? (
+                        <span>
+                          {fmtRate(m.pricing.input)} / {fmtRate(m.pricing.output)}
+                          {m.pricing.cached !== undefined && <span className="text-text-muted"> · cached {fmtRate(m.pricing.cached)}</span>}
+                        </span>
+                      ) : m.autoPricing && m.autoPricing.length > 0 ? (
+                        <span className="text-text-muted">
+                          {m.autoPricing.map((a, i) => (
+                            <span key={a.model}>
+                              {i > 0 && "; "}
+                              {a.model}: {fmtRate(a.sellInput)} / {fmtRate(a.sellOutput)}
+                            </span>
+                          ))}
+                          <span className="block text-[10px]">auto: official × (1 − discount)</span>
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">member price</span>
+                      )}
                     </td>
                     <td className="px-6 py-3">
                       <Badge variant={m.enabled ? "success" : "error"}>{m.enabled ? "enabled" : "disabled"}</Badge>
                     </td>
                     <td className="px-6 py-3 text-right">
                       <div className="flex gap-2 justify-end">
+                        <button
+                          disabled={pubBusy}
+                          onClick={() => startEditPublicModel(m)}
+                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-bg-subtle disabled:opacity-50"
+                        >
+                          Edit
+                        </button>
                         <button
                           disabled={pubBusy}
                           onClick={() => togglePublicModel(m)}
@@ -512,6 +557,47 @@ export default function CustomersPage() {
             </tbody>
           </table>
         </div>
+        {editingPub && (
+          <div className="p-4 border-t border-border bg-bg-subtle/30">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+              <span className="text-sm font-medium font-mono">{editingPub.publicName}</span>
+              <input
+                type="number" step="0.01" min="0" placeholder="Sell $/1M input"
+                value={editingPub.pricing.input}
+                onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, input: e.target.value } }))}
+                className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+              />
+              <input
+                type="number" step="0.01" min="0" placeholder="Sell $/1M output"
+                value={editingPub.pricing.output}
+                onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, output: e.target.value } }))}
+                className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+              />
+              <input
+                type="number" step="0.01" min="0" placeholder="Cached $/1M (opt.)"
+                value={editingPub.pricing.cached}
+                onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, cached: e.target.value } }))}
+                className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+              />
+              <button
+                onClick={() => savePublicModel(editingPub)}
+                disabled={pubBusy}
+                className="rounded-md bg-primary px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setEditingPub(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm hover:bg-bg-subtle"
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="text-xs text-text-muted mt-2">
+              Kosongkan semua → kembali ke harga member (official × (1 − discount)).
+            </p>
+          </div>
+        )}
       </Card>
 
       <Card className="overflow-hidden">

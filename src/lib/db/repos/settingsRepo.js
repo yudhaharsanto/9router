@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS = {
   oidcClientSecret: "",
   oidcScopes: "openid profile email",
   oidcLoginLabel: "Sign in with OIDC",
+  googleOAuthClientId: "",
+  googleOAuthClientSecret: "",
   samlEntryPoint: "",
   samlIssuer: "urn:9router:sp",
   samlCert: "",

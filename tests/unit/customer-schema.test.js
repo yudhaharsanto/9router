@@ -75,4 +75,42 @@ describe("Customer billing schema", () => {
     const tables = db2.all(`SELECT name FROM sqlite_master WHERE type='table'`).map((t) => t.name);
     expect(tables).toContain("topups");
   });
+
+  it("exportDb includes customer billing tables and importDb restores them", async () => {
+    const dbi = await import("@/lib/db/index.js");
+    const c = await dbi.getOrCreateCustomer({ googleSub: "exp-1", email: "e@x.y", name: "E" });
+    await dbi.creditCustomer(c.id, 5_000_000, { refType: "topup", refId: "exp-t-1" });
+    await dbi.upsertPricingVersion({
+      modelId: "glm-5.3-flash", officialInputMicros: 300_000, officialOutputMicros: 1_500_000,
+      effectiveFrom: "2026-10-01T00:00:00Z",
+    });
+    await dbi.upsertPublicModel({ publicName: "glm-5.3-flash", comboId: "combo-x" });
+
+    const dump = await dbi.exportDb();
+    expect(dump.customers.length).toBeGreaterThanOrEqual(1);
+    expect(dump.ledger.length).toBeGreaterThanOrEqual(1);
+    expect(dump.customerBalances.length).toBeGreaterThanOrEqual(1);
+    expect(dump.pricingVersions.length).toBeGreaterThanOrEqual(1);
+    expect(dump.publicModels.length).toBeGreaterThanOrEqual(1);
+
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const dba = await getAdapter();
+    dba.transaction(() => {
+      dba.run(`DELETE FROM customers`);
+      dba.run(`DELETE FROM customerBalances`);
+      dba.run(`DELETE FROM ledger`);
+      dba.run(`DELETE FROM pricingVersions`);
+      dba.run(`DELETE FROM publicModels`);
+    });
+
+    await dbi.importDb(dump);
+    const restored = await dbi.getCustomerById(c.id);
+    expect(restored.googleSub).toBe("exp-1");
+    const bal = await dbi.getBalance(c.id);
+    expect(bal.balanceMicros).toBe(5_000_000);
+    const ledger = await dbi.getLedger(c.id);
+    expect(ledger.length).toBe(1);
+    expect((await dbi.getActivePricing("glm-5.3-flash")).officialInputMicros).toBe(300_000);
+    expect(await dbi.getPublicModelByName("glm-5.3-flash")).not.toBeNull();
+  });
 });

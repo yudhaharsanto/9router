@@ -109,6 +109,14 @@ export async function exportDb() {
     customModels: [],
     mitmAlias: {},
     pricing: {},
+    customers: db.all(`SELECT * FROM customers`),
+    customerKeys: db.all(`SELECT * FROM customerKeys`),
+    customerBalances: db.all(`SELECT * FROM customerBalances`),
+    ledger: db.all(`SELECT * FROM ledger`),
+    topups: db.all(`SELECT * FROM topups`),
+    webhookEvents: db.all(`SELECT * FROM webhookEvents`),
+    pricingVersions: db.all(`SELECT * FROM pricingVersions`),
+    publicModels: db.all(`SELECT * FROM publicModels`),
   };
 
   for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'modelAliases'`)) out.modelAliases[r.key] = parseJson(r.value);
@@ -134,6 +142,14 @@ export async function importDb(payload) {
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
+    db.run(`DELETE FROM customers`);
+    db.run(`DELETE FROM customerKeys`);
+    db.run(`DELETE FROM customerBalances`);
+    db.run(`DELETE FROM ledger`);
+    db.run(`DELETE FROM topups`);
+    db.run(`DELETE FROM webhookEvents`);
+    db.run(`DELETE FROM pricingVersions`);
+    db.run(`DELETE FROM publicModels`);
 
     // Settings
     if (payload.settings) {
@@ -175,6 +191,54 @@ export async function importDb(payload) {
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {
       db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [a, stringifyJson(m)]);
+    }
+    for (const c of payload.customers || []) {
+      db.run(
+        `INSERT OR REPLACE INTO customers(id, googleSub, email, name, status, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+        [c.id, c.googleSub, c.email || null, c.name || null, c.status || "active", c.createdAt, c.updatedAt || c.createdAt]
+      );
+    }
+    for (const k of payload.customerKeys || []) {
+      db.run(
+        `INSERT OR REPLACE INTO customerKeys(id, customerId, keyHash, keyMask, revokedAt, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [k.id, k.customerId, k.keyHash, k.keyMask, k.revokedAt || null, k.createdAt]
+      );
+    }
+    for (const b of payload.customerBalances || []) {
+      db.run(
+        `INSERT OR REPLACE INTO customerBalances(customerId, balanceMicros, reservedMicros, updatedAt) VALUES(?, ?, ?, ?)`,
+        [b.customerId, b.balanceMicros || 0, b.reservedMicros || 0, b.updatedAt || new Date().toISOString()]
+      );
+    }
+    for (const l of payload.ledger || []) {
+      db.run(
+        `INSERT OR REPLACE INTO ledger(id, customerId, type, amountMicros, balanceAfterMicros, refType, refId, meta, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.id, l.customerId, l.type, l.amountMicros, l.balanceAfterMicros, l.refType || null, l.refId || null, l.meta || null, l.createdAt]
+      );
+    }
+    for (const t of payload.topups || []) {
+      db.run(
+        `INSERT OR REPLACE INTO topups(id, customerId, takoTxnId, amountIdr, rateMilli, creditedMicros, status, paymentUrl, paidAt, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [t.id, t.customerId, t.takoTxnId || null, t.amountIdr, t.rateMilli, t.creditedMicros == null ? null : t.creditedMicros, t.status || "pending", t.paymentUrl || null, t.paidAt || null, t.createdAt, t.updatedAt || t.createdAt]
+      );
+    }
+    for (const w of payload.webhookEvents || []) {
+      db.run(
+        `INSERT OR REPLACE INTO webhookEvents(id, source, externalId, payload, status, processError, processedAt, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+        [w.id, w.source, w.externalId, w.payload, w.status || "unprocessed", w.processError || null, w.processedAt || null, w.createdAt]
+      );
+    }
+    for (const p of payload.pricingVersions || []) {
+      db.run(
+        `INSERT OR REPLACE INTO pricingVersions(id, modelId, officialInputMicros, officialOutputMicros, discountBps, sellInputMicros, sellOutputMicros, effectiveFrom, source, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.modelId, p.officialInputMicros, p.officialOutputMicros, p.discountBps, p.sellInputMicros, p.sellOutputMicros, p.effectiveFrom, p.source || null, p.createdAt]
+      );
+    }
+    for (const m of payload.publicModels || []) {
+      db.run(
+        `INSERT OR REPLACE INTO publicModels(id, publicName, comboId, enabled, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [m.id, m.publicName, m.comboId, m.enabled === false ? 0 : 1, m.createdAt, m.updatedAt || m.createdAt]
+      );
     }
     for (const m of payload.customModels || []) {
       const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;

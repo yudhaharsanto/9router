@@ -201,6 +201,10 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   if (isCodexResponsesApi) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
+      // Public model masking (spec §3.6)
+      if (customerBilling?.publicName && jsonResponse && typeof jsonResponse === "object") {
+        jsonResponse.model = customerBilling.publicName;
+      }
       if (onRequestSuccess) await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};

@@ -14,6 +14,7 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { isCustomerKey, authorizeCustomerRequest, holdForRequest } from "@/lib/billing/customerGate.js";
+import { resolvePublicModelRequest } from "@/lib/billing/publicModelMap.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -151,8 +152,22 @@ export async function handleChat(request, clientRawRequest = null) {
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
+  // Public model mapping (phase 6): a customer-facing public name resolves to
+  // its combo members here; the public name rides customerBilling for
+  // response masking. Falls through to normal combo/name resolution otherwise.
+  let publicModelName = null;
+  const publicResolved = await resolvePublicModelRequest(modelStr);
+  if (publicResolved) {
+    if (!customerBilling) {
+      log.warn("CHAT", `Public model "${modelStr}" used without a customer key`);
+      return errorResponse(HTTP_STATUS.FORBIDDEN, "This model requires a customer API key.");
+    }
+    publicModelName = publicResolved.publicName;
+    customerBilling.publicName = publicModelName;
+  }
+
   // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
+  const comboModels = publicResolved ? publicResolved.models : await getComboModels(modelStr);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};

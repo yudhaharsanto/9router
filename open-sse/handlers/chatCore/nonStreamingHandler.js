@@ -313,6 +313,12 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   // provider opts in via transport.quirks.clineEnvelope.
   responseBody = unwrapClineEnvelope(responseBody, provider);
 
+  // Public model masking (spec §3.6): rewrite the model field before any
+  // consumer (translate-back, detail logs, client body) sees the real name.
+  if (customerBilling?.publicName && responseBody && typeof responseBody === "object") {
+    responseBody.model = customerBilling.publicName;
+  }
+
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
   if (onRequestSuccess) {
     Promise.resolve()

@@ -1,4 +1,6 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelKind } from "@/shared/constants/models";
+import { isCustomerKey } from "@/lib/billing/customerGate.js";
+import { customerModelsList } from "@/lib/billing/publicModelMap.js";
 import {
   ALIAS_TO_ID,
   AI_PROVIDERS,
@@ -653,15 +655,26 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
+
+    // Customer keys (sk-cust-) see only enabled public models — combo IDs and
+    // provider names never leave the server (spec §3.6).
+    const authHeader = request?.headers?.get("Authorization");
+    const rawApiKey = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : request?.headers?.get("x-api-key");
+    if (isCustomerKey(rawApiKey)) {
+      const data = await customerModelsList();
+      return Response.json({ object: "list", data }, {
+        headers: { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" },
+      });
+    }
+
     let data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
 
     // If the request carries an API key with an allow-list, filter the catalog
     // to that key's available models (alias-aware: alias and target are equivalent).
     try {
-      const authHeader = request?.headers?.get("Authorization");
-      const apiKey = authHeader?.startsWith("Bearer ")
-        ? authHeader.slice(7)
-        : request?.headers?.get("x-api-key");
+      const apiKey = rawApiKey;
       if (apiKey) {
         const allowed = await getApiKeyAllowedModels(apiKey);
         if (allowed.length) {

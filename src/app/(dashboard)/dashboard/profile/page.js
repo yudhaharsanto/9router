@@ -47,6 +47,12 @@ export default function ProfilePage() {
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
   const [oidcExpanded, setOidcExpanded] = useState(false);
+  // Customer portal Google OAuth (phase 2) — separate from admin SSO above.
+  const [googleForm, setGoogleForm] = useState({ googleOAuthClientId: "" });
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleStatus, setGoogleStatus] = useState({ type: "", message: "" });
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleExpanded, setGoogleExpanded] = useState(false);
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const oidcRedirectUri = origin ? `${origin}/api/auth/oidc/callback` : "/api/auth/oidc/callback";
@@ -92,6 +98,7 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
+        setGoogleForm({ googleOAuthClientId: data?.googleOAuthClientId || "" });
         setOidcForm({
           authMode: data?.authMode || "password",
           oidcIssuerUrl: data?.oidcIssuerUrl || "",
@@ -409,6 +416,43 @@ export default function ProfilePage() {
       setOidcStatus({ type: "error", message: "An error occurred" });
     } finally {
       setOidcLoading(false);
+    }
+  };
+
+  // Customer portal Google OAuth — write-only secret, blank = keep existing
+  // (mirrors the OIDC save pattern; the API enforces the same no-wipe rule).
+  const saveGoogleSettings = async () => {
+    setGoogleLoading(true);
+    setGoogleStatus({ type: "", message: "" });
+    const clientId = googleForm.googleOAuthClientId.trim();
+    const secret = googleClientSecret.trim();
+    if (!clientId) {
+      setGoogleStatus({ type: "error", message: "Client ID is required." });
+      setGoogleLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          googleOAuthClientId: clientId,
+          ...(secret ? { googleOAuthClientSecret: secret } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSettings((prev) => ({ ...prev, ...data }));
+        setGoogleForm({ googleOAuthClientId: data.googleOAuthClientId || clientId });
+        setGoogleClientSecret("");
+        setGoogleStatus({ type: "success", message: "Google sign-in settings saved." });
+      } else {
+        setGoogleStatus({ type: "error", message: data.error || "Failed to save Google settings" });
+      }
+    } catch {
+      setGoogleStatus({ type: "error", message: "An error occurred" });
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -1429,6 +1473,82 @@ export default function ProfilePage() {
               {settings.authMode === "both" && (
                 <p className="text-xs sm:text-sm text-amber-600 dark:text-amber-400">
                   Password and SSO login ({settings.ssoType === "saml" ? "SAML 2.0" : "OIDC"}) are both active.
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Customer Portal (Google sign-in) */}
+        <Card>
+          <button
+            type="button"
+            onClick={() => setGoogleExpanded((v) => !v)}
+            className="w-full flex items-center gap-3 text-left"
+          >
+            <div className="p-2 rounded-lg bg-red-500/10 text-red-500 shrink-0">
+              <span className="material-symbols-outlined text-[20px]">token</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base sm:text-lg font-semibold">Customer Portal — Google Sign-in</h3>
+              <p className="text-xs text-text-muted">
+                {settings.googleOAuthConfigured
+                  ? "Configured — customers can sign in at /usage-check"
+                  : "Not configured — the /usage-check sign-in button will show an error"}
+              </p>
+            </div>
+            <span className="material-symbols-outlined text-text-muted shrink-0">
+              {googleExpanded ? "expand_less" : "expand_more"}
+            </span>
+          </button>
+
+          {googleExpanded && (
+            <div className="flex flex-col gap-4 mt-4">
+              <p className="text-xs sm:text-sm text-text-muted">
+                Google OAuth for the customer portal at <code className="bg-surface-2 px-1 rounded">/usage-check</code>.
+                Separate from admin SSO above.
+              </p>
+
+              <div className="flex flex-col gap-2">
+                <label className="font-medium text-sm sm:text-base">Client ID</label>
+                <Input
+                  placeholder="1234567890-xxx.apps.googleusercontent.com"
+                  value={googleForm.googleOAuthClientId}
+                  onChange={(e) => setGoogleForm((f) => ({ ...f, googleOAuthClientId: e.target.value }))}
+                  disabled={loading || googleLoading}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="font-medium text-sm sm:text-base">Client Secret</label>
+                <Input
+                  type="password"
+                  placeholder="Leave blank to keep existing secret"
+                  value={googleClientSecret}
+                  onChange={(e) => setGoogleClientSecret(e.target.value)}
+                  disabled={loading || googleLoading}
+                />
+                <p className="text-xs sm:text-sm text-text-muted">This value is write-only after saving.</p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-bg p-3 text-xs sm:text-sm text-text-muted">
+                <p className="font-medium text-text-main mb-1">Authorized redirect URI (paste in Google Cloud Console)</p>
+                <code className="block break-all font-mono">{origin ? `${origin}/api/customer/auth/google/callback` : "/api/customer/auth/google/callback"}</code>
+              </div>
+
+              <Button
+                type="button"
+                variant="primary"
+                loading={googleLoading}
+                onClick={saveGoogleSettings}
+                className="w-full sm:w-auto self-start"
+              >
+                Save Google settings
+              </Button>
+
+              {googleStatus.message && (
+                <p className={`text-xs sm:text-sm ${googleStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                  {googleStatus.message}
                 </p>
               )}
             </div>

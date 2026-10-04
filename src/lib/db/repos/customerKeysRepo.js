@@ -1,6 +1,9 @@
 import crypto from "crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { DATA_DIR } from "@/lib/dataDir";
 
 // Same secret convention as src/shared/utils/apiKey.js — one env, one fallback.
 const API_KEY_SECRET = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
@@ -47,9 +50,20 @@ export async function createCustomerKey(customerId) {
 // JWT_SECRET. The ciphertext is useless without the server secret, and the
 // secret is never stored beside the data it protects.
 function masterKey() {
-  const secret = process.env.JWT_SECRET;
+  // Resolve the secret exactly like the session layer does (env, else the
+  // jwt-secret file) — the standalone/custom server does not always load
+  // .env, so env-only would silently disable encryption.
+  const secret = process.env.JWT_SECRET || readJwtSecretFile();
   if (!secret) return null; // no secret → no encryption, reveal disabled
   return crypto.createHash("sha256").update(`9router:keyenc:${secret}`).digest();
+}
+
+function readJwtSecretFile() {
+  try {
+    return fs.readFileSync(path.join(DATA_DIR, "jwt-secret"), "utf8").trim();
+  } catch {
+    return null;
+  }
 }
 
 // Exported for the raw-insert sites (google provision + regenerate) that build

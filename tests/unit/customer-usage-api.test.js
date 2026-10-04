@@ -145,8 +145,34 @@ describe("GET /api/customer/usage", () => {
     const body = await (await mod.GET(req("/api/customer/usage", token))).json();
     expect(body.items.length).toBe(1);
     expect(body.items[0].model).toBe("glm-5.3-flash");
+    expect(body.items[0].chargedMicros).toBe(null); // no linked ledger debit
     expect(JSON.stringify(body.items)).not.toContain("combo/glm-flash");
     expect(JSON.stringify(body.items)).not.toContain("gemini-3.6-flash-low");
+  });
+
+  it("links per-request chargedMicros from the ledger debit via holdRefId", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-link" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: "glm-combo2", kind: "fallback", models: ["ih/combo/glm-flash"] });
+    await upsertPublicModel({ publicName: "glm-5.3-flash", comboId: combo.id, enabled: true });
+    const { updatePricing } = await import("@/lib/db/repos/pricingRepo.js");
+    await updatePricing({ p: { m: { input: 1, output: 2 } } });
+
+    // saveRequestUsage with holdRefId in meta (what saveUsageStats now records
+    // for customer traffic), then settle creating the usage_debit for it.
+    await db.saveRequestUsage({ provider: "inferhub", model: "combo/glm-flash", tokens: { prompt_tokens: 10, completion_tokens: 10 }, apiKey: key, meta: { holdRefId: "req-link1" } });
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    await ledger.creditCustomer(c.id, 1_000_000, { refType: "test", refId: "seed-l1" });
+    await ledger.holdReserve(c.id, 100_000, "req-link1");
+    await ledger.settleUsage(c.id, "req-link1", 10, {});
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage", token))).json();
+    expect(body.items.length).toBe(1);
+    expect(body.items[0].chargedMicros).toBe(10);
   });
 
   it("saved floors at 0 when charged exceeds official estimate", async () => {

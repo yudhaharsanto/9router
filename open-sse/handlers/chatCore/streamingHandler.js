@@ -144,7 +144,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, c
     });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE", silent: true });
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, customerBilling, label: "STREAM USAGE", silent: true });
       if (customerBilling) await settleCustomerUsageSafe(customerBilling, provider, model, usage);
     if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
   };

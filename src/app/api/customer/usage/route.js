@@ -47,12 +47,26 @@ export async function GET(request) {
   // and move the filter into SQL.
   const db = await getAdapter();
   const rows = db.all(
-    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey
+    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey, meta
      FROM usageHistory WHERE timestamp >= COALESCE(?, '1970-01-01')
      ORDER BY id DESC LIMIT 1000`,
     [startDate ? startDate.toISOString() : null]
   );
   const keyHash = active.keyHash;
+  // The actual amount billed per request lives in the customer's ledger
+  // (usage_debit, refId = holdRefId). usageHistory.meta records that holdRefId
+  // for customer traffic (set by saveUsageStats), so join per-request charges
+  // on it — the "cost" column is the official catalog estimate, not what the
+  // customer was charged.
+  const debitRows = db.all(
+    `SELECT refId, amountMicros FROM ledger
+      WHERE customerId = ? AND type = 'usage_debit' AND createdAt >= COALESCE(?, '1970-01-01')`,
+    [session.customerId, startDate ? startDate.toISOString() : null]
+  );
+  const chargedByHoldRef = new Map(debitRows.map((d) => [d.refId, -Number(d.amountMicros)]));
+  const parseMeta = (raw) => {
+    try { return JSON.parse(raw || "{}") || {}; } catch { return {}; }
+  };
   // Published-model view: usageHistory records the upstream model name (combo
   // members etc.), but the customer only knows public names. Map each distinct
   // model to its published public name; rows whose model belongs to no enabled
@@ -79,6 +93,7 @@ export async function GET(request) {
       promptTokens: r.promptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
       cost: r.cost,
+      chargedMicros: chargedByHoldRef.get(parseMeta(r.meta).holdRefId) ?? null,
       status: r.status,
       mask: active.keyMask,
     }));
@@ -86,13 +101,8 @@ export async function GET(request) {
   // Totals for the "official vs what you paid" view: official cost comes from
   // the usage stats above; the actual charged amount is the customer's
   // usage_debit ledger entries in the same window (integer micro-USD).
-  const chargedRows = db.all(
-    `SELECT amountMicros FROM ledger
-      WHERE customerId = ? AND type = 'usage_debit' AND createdAt >= COALESCE(?, '1970-01-01')`,
-    [session.customerId, startDate ? startDate.toISOString() : null]
-  );
   const officialMicros = Math.round(items.reduce((s, r) => s + (Number(r.cost) || 0) * 1_000_000, 0));
-  const chargedMicros = -chargedRows.reduce((s, r) => s + Number(r.amountMicros), 0); // debits are negative
+  const chargedMicros = -debitRows.reduce((s, r) => s + Number(r.amountMicros), 0); // debits are negative
   return NextResponse.json(
     { items, totals: { officialMicros, chargedMicros, savedMicros: Math.max(0, officialMicros - chargedMicros) } },
     { headers: { "Cache-Control": "no-store" } },

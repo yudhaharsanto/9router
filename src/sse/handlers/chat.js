@@ -13,6 +13,7 @@ import {
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
+import { isCustomerKey, authorizeCustomerRequest, holdForRequest } from "@/lib/billing/customerGate.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -73,7 +74,25 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Enforce API key if enabled in settings
   const settings = await getSettings();
-  if (settings.requireApiKey) {
+
+  // Customer billing gate (spec §3.8) — sk-cust- keys never hit the admin-key
+  // path: they authorize against the customer ledger and hold a balance
+  // reserve before any upstream call. Insufficient balance → 402, no fallback.
+  let customerBilling = null;
+  if (isCustomerKey(apiKey)) {
+    const auth = await authorizeCustomerRequest(apiKey);
+    if (!auth) {
+      log.warn("AUTH", "Invalid customer API key");
+      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
+    const hold = await holdForRequest(auth.customerId, body);
+    if (!hold.ok) {
+      log.warn("AUTH", `Insufficient balance for customer ${auth.customerId}`);
+      return errorResponse(HTTP_STATUS.PAYMENT_REQUIRED, "Insufficient balance. Please top up.");
+    }
+    customerBilling = auth;
+    customerBilling.holdRefId = hold.holdRefId;
+  } else if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
@@ -85,8 +104,9 @@ export async function handleChat(request, clientRawRequest = null) {
     }
   }
 
-  // Enforce per-key token limit (independent of requireApiKey)
-  if (apiKey) {
+  // Enforce per-key token limit (independent of requireApiKey); customer keys
+  // are metered by balance, not by the admin key's token window.
+  if (apiKey && !customerBilling) {
     const limit = await checkApiKeyLimit(apiKey);
     if (limit.exceeded) {
       log.warn("AUTH", `API key token limit exceeded (${limit.used}/${limit.limit} per ${limit.window})`);
@@ -111,8 +131,9 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
-  // Enforce per-key model allow-list (if configured)
-  if (apiKey) {
+  // Enforce per-key model allow-list (if configured); customer keys have no
+  // admin key allow-list (public model mapping comes in phase 6).
+  if (apiKey && !customerBilling) {
     const modelCheck = await checkApiKeyModelAllowed(apiKey, modelStr);
     if (!modelCheck.allowed) {
       log.warn("AUTH", `Model "${modelStr}" not allowed for this API key`);
@@ -151,7 +172,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, customerBilling);
         },
         log,
         comboName: modelStr,
@@ -195,13 +216,13 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null, customerBilling);
 }
 
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null, customerBilling = null) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -228,7 +249,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, customerBilling);
           },
           log,
           comboName: modelStr,
@@ -243,7 +264,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, customerBilling),
           adapterAdded
         ),
         log,
@@ -313,6 +334,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       connectionId: credentials.connectionId,
       userAgent,
       apiKey,
+      customerBilling,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: !!chatSettings.rtkEnabled,
       headroomEnabled: !!chatSettings.headroomEnabled,

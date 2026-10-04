@@ -55,6 +55,9 @@ export {
 export {
   getOrCreateCustomer, getCustomerById, setCustomerStatus,
 } from "./repos/customersRepo.js";
+export {
+  createCustomerKey, validateCustomerKey, revokeCustomerKey, getActiveKeyForCustomer,
+} from "./repos/customerKeysRepo.js";
 
 // Disabled models
 export {

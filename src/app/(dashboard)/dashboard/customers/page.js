@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
+import Modal from "@/shared/components/Modal";
+import Button from "@/shared/components/Button";
 import { CardSkeleton } from "@/shared/components/Loading";
 
 // Money is stored as integer micro-USD (µ$) — same convention as the portal.
@@ -140,6 +142,35 @@ export default function CustomersPage() {
           : String(va ?? "").localeCompare(String(vb ?? ""));
         return sortOrder === "asc" ? cmp : -cmp;
       });
+
+  const [balanceModal, setBalanceModal] = useState(null); // { id, name, amountUsd, reason }
+  const [balanceBusy, setBalanceBusy] = useState(false);
+  const [balanceMsg, setBalanceMsg] = useState(null);
+
+  const submitBalance = async () => {
+    if (!balanceModal) return;
+    setBalanceBusy(true);
+    setBalanceMsg(null);
+    try {
+      const res = await fetch(`/api/admin/customers/${balanceModal.id}/balance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountUsd: Number(balanceModal.amountUsd),
+          reason: balanceModal.reason || undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setBalanceMsg({ ok: true, text: `New balance: ${(body.balance.balanceMicros / 1e6).toFixed(2)}` });
+      const cBody = await (await fetch("/api/admin/customers", { cache: "no-store" })).json();
+      setCustomers(cBody.customers || []);
+    } catch (e) {
+      setBalanceMsg({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setBalanceBusy(false);
+    }
+  };
 
   const setStatus = async (id, status) => {
     setBusyId(id);
@@ -338,7 +369,17 @@ export default function CustomersPage() {
                   <td className="px-6 py-3">{cellValue(c, "keyMask")}</td>
                   <td className="px-6 py-3">{cellValue(c, "createdAt")}</td>
                   <td className="px-6 py-3">
-                    {c.status === "active" ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setBalanceMsg(null);
+                          setBalanceModal({ id: c.id, name: c.name || c.email || c.id, amountUsd: "", reason: "" });
+                        }}
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40"
+                      >
+                        Balance
+                      </button>
+                      {c.status === "active" ? (
                       <button
                         disabled={busyId === c.id}
                         onClick={() => setStatus(c.id, "disabled")}
@@ -354,7 +395,8 @@ export default function CustomersPage() {
                       >
                         Enable
                       </button>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -362,6 +404,52 @@ export default function CustomersPage() {
           </table>
         </div>
       </Card>
+
+      {/* Balance adjustment modal */}
+      <Modal
+        isOpen={!!balanceModal}
+        onClose={() => { setBalanceModal(null); setBalanceMsg(null); }}
+        title={`Adjust Balance — ${balanceModal?.name || ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setBalanceModal(null); setBalanceMsg(null); }}>Close</Button>
+            <Button
+              variant="primary"
+              disabled={balanceBusy || !(Number(balanceModal?.amountUsd) !== 0 && Number.isFinite(Number(balanceModal?.amountUsd)))}
+              onClick={submitBalance}
+            >
+              {balanceBusy ? "Applying…" : "Apply"}
+            </Button>
+          </>
+        }
+      >
+        {balanceModal && (
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-text-muted">Amount USD (negative to debit)</span>
+              <input
+                type="number" step="0.01"
+                value={balanceModal.amountUsd}
+                onChange={(e) => setBalanceModal((b) => ({ ...b, amountUsd: e.target.value }))}
+                className="rounded-md border border-border bg-bg-subtle px-3 py-2"
+                autoFocus
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-text-muted">Reason (optional, recorded in ledger)</span>
+              <input
+                type="text"
+                value={balanceModal.reason}
+                onChange={(e) => setBalanceModal((b) => ({ ...b, reason: e.target.value }))}
+                className="rounded-md border border-border bg-bg-subtle px-3 py-2"
+              />
+            </label>
+            {balanceMsg && (
+              <p className={`text-xs ${balanceMsg.ok ? "text-green-600" : "text-red-600"}`}>{balanceMsg.text}</p>
+            )}
+          </div>
+        )}
+      </Modal>
 
       <Card className="overflow-hidden">
         <div className="p-4 border-b border-border bg-bg-subtle/50">

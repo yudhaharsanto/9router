@@ -150,6 +150,39 @@ describe("POST /api/customer/topup", () => {
     expect(res.status).toBe(403);
   });
 
+  it("manual mode: without Tako config the topup is still created (pending), with a message", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "topup-manual" });
+    const token = await sessionFor(c);
+    const { updateSettings } = await import("@/lib/db/repos/settingsRepo.js");
+    // rate set, but no Tako username → manual mode
+    await updateSettings({ idrPerUsd: "16000", takoUsername: "" });
+
+    const mod = await import("@/app/api/customer/topup/route.js");
+    const res = await mod.POST(req("/api/customer/topup", token, {
+      method: "POST",
+      body: JSON.stringify({ amountIdr: 150_000 }), // arbitrary amount, no presets
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.manual).toBe(true);
+    expect(body.topup.status).toBe("pending");
+    expect(body.topup.amountIdr).toBe(150_000);
+    expect(body.topup.rateMilli).toBe(16_000_000);
+    // no Tako txn stored
+    expect(body.topup.takoTxnId).toBeNull();
+  });
+
+  it("400 when amountIdr is below the minimum", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "topup-low" });
+    const token = await sessionFor(c);
+    const mod = await import("@/app/api/customer/topup/route.js");
+    const res = await mod.POST(req("/api/customer/topup", token, {
+      method: "POST",
+      body: JSON.stringify({ amountIdr: 5000 }),
+    }));
+    expect(res.status).toBe(400);
+  });
+
   it("creates a pending topup and returns the Tako paymentUrl", async () => {
     // Set the rate + Tako username via updateSettings.
     const { updateSettings } = await import("@/lib/db/repos/settingsRepo.js");

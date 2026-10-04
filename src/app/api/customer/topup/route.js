@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 // (spec §3.3). Rate snapshot comes from settings (idrPerUsd); without a valid
 // rate creation is blocked — never guess. The merchant key is server-only.
 const TAKO_TOPUP_URL = (username) => `https://tako.id/api/v1/topup/${encodeURIComponent(username)}`;
-const ALLOWED_AMOUNTS_IDR = [10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
 
 export async function POST(request) {
   const session = await requireCustomerSession(request);
@@ -17,9 +16,9 @@ export async function POST(request) {
 
   const body = await request.json().catch(() => ({}));
   const amountIdr = Number(body?.amountIdr);
-  if (!Number.isInteger(amountIdr) || !ALLOWED_AMOUNTS_IDR.includes(amountIdr)) {
+  if (!Number.isInteger(amountIdr) || amountIdr < 10_000 || amountIdr > 100_000_000) {
     return NextResponse.json(
-      { error: `amountIdr must be one of: ${ALLOWED_AMOUNTS_IDR.join(", ")}` },
+      { error: "amountIdr must be an integer between 10000 and 100000000" },
       { status: 400 },
     );
   }
@@ -34,15 +33,22 @@ export async function POST(request) {
   }
   const rateMilli = Math.round(ratePerUsd * 1000);
 
-  const username = (settings.takoUsername || "").trim();
-  const merchantKey = (process.env.TAKO_MERCHANT_KEY || "").trim();
-  if (!username || !merchantKey) {
-    return NextResponse.json({ error: "Top-up is not configured" }, { status: 403 });
-  }
-
   // Rate snapshot is locked at creation; the credit amount is precomputed and
   // later rate changes never re-write it (spec §3.4).
   const topup = await createTopup({ customerId: session.customerId, amountIdr, rateMilli });
+
+  const username = (settings.takoUsername || "").trim();
+  const merchantKey = (process.env.TAKO_MERCHANT_KEY || "").trim();
+  if (!username || !merchantKey) {
+    // Manual mode: the row stays pending so the request is auditable; an
+    // admin credits it via balance adjustment (or the Tako webhook if a key
+    // is configured later). Nothing payment-secret is exposed here.
+    return NextResponse.json({
+      topup,
+      manual: true,
+      message: "Pembayaran online belum tersedia. Top-up tercatat — hubungi admin untuk menyelesaikannya.",
+    });
+  }
 
   try {
     const res = await fetch(TAKO_TOPUP_URL(username), {

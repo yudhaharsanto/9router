@@ -43,9 +43,11 @@ const USAGE_PERIODS = [
 
 const LEDGER_TYPE_LABEL = {
   topup_credit: "Top-up",
+  usage_debit: "Usage",
   usage_settle: "Usage",
   reserve_hold: "Reserve",
-  admin_adjust: "Adjustment",
+  reserve_release: "Release",
+  adjustment: "Adjustment",
 };
 
 // Reverse index: provider alias/uiAlias → provider id (untuk ikon /providers/{id}.png).
@@ -307,7 +309,7 @@ function PublicModelsCard() {
   return (
     <Card>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-primary">Harga Model</h3>
+        <h3 className="text-sm font-semibold text-primary">Price Model</h3>
         <span className="text-[11px] text-text-muted">USD per 1M token</span>
       </div>
       {items === null ? (
@@ -323,7 +325,7 @@ function PublicModelsCard() {
               <tr className="text-left text-text-muted border-b border-border-subtle">
                 <th className="py-2 pr-3 font-medium">Model</th>
                 <th className="py-2 pr-3 font-medium text-right">Official</th>
-                <th className="py-2 pr-3 font-medium text-right">Harga Kamu</th>
+                <th className="py-2 pr-3 font-medium text-right">Price</th>
                 <th className="py-2 font-medium text-right">Cache</th>
               </tr>
             </thead>
@@ -352,8 +354,8 @@ function PublicModelsCard() {
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3">
-        &ldquo;Harga Kamu&rdquo; = harga final setelah diskon yang dipakai billing. Cache = harga input
-        saat prompt ter-cache, sebagai % dari harga input.
+        &ldquo;Price&rdquo; = The final price after the discount, used for billing. <br /> &ldquo;Cache&ldquo; = input price
+        when the prompt is cached, as a percentage of the input price.
       </p>
     </Card>
   );
@@ -376,10 +378,22 @@ const TOPUP_STATUS_LABEL = {
 
 function TopUpCard() {
   const [amount, setAmount] = useState(TOPUP_AMOUNTS_IDR[2]);
+  const [custom, setCustom] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [paymentUrl, setPaymentUrl] = useState(null);
   const [history, setHistory] = useState(null);
+
+  // Preset click clears the free-form field; typing in it clears the preset.
+  const pickPreset = (a) => {
+    setAmount(a);
+    setCustom("");
+  };
+  const effectiveAmount = () => {
+    const n = Number(custom);
+    return custom !== "" && Number.isInteger(n) ? n : amount;
+  };
 
   const loadHistory = useCallback(() => {
     fetch("/api/customer/topups?limit=10")
@@ -393,23 +407,35 @@ function TopUpCard() {
   }, [loadHistory]);
 
   const startTopup = async () => {
+    const amountIdr = effectiveAmount();
+    if (!Number.isInteger(amountIdr) || amountIdr < 10_000) {
+      setError("Nominal minimal Rp 10.000.");
+      return;
+    }
     setBusy(true);
     setError("");
+    setNotice("");
     setPaymentUrl(null);
     try {
       const res = await fetch("/api/customer/topup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountIdr: amount }),
+        body: JSON.stringify({ amountIdr }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || `Gagal (${res.status})`);
+      } else if (data.manual) {
+        // No online payment configured server-side; the request is recorded
+        // pending and the customer contacts the admin to settle it.
+        setNotice(data.message || "Top-up tercatat — hubungi admin.");
+        setAmount(amountIdr);
+        loadHistory();
       } else {
         setPaymentUrl(data.topup?.paymentUrl || null);
         loadHistory();
         if (!data.topup?.paymentUrl) {
-          setError("Top-up dibuat. Menunggu konfirmasi pembayaran.");
+          setNotice("Top-up dibuat. Menunggu konfirmasi pembayaran.");
         }
       }
     } catch (err) {
@@ -423,21 +449,36 @@ function TopUpCard() {
     <Card className="flex flex-col gap-3 px-4 py-4">
       <div>
         <h3 className="text-sm font-semibold text-primary mb-2">Top Up Balance</h3>
-        <div className="flex flex-wrap gap-2">
-          {TOPUP_AMOUNTS_IDR.map((a) => (
-            <button
-              key={a}
-              type="button"
-              onClick={() => setAmount(a)}
-              className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
-                amount === a
-                  ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
-                  : "border-border-subtle text-text-muted hover:text-text-main"
-              }`}
-            >
-              Rp {a.toLocaleString("id-ID")}
-            </button>
-          ))}
+        <div>
+          <div className="flex flex-wrap gap-2">
+            {TOPUP_AMOUNTS_IDR.map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => pickPreset(a)}
+                className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                  custom === "" && amount === a
+                    ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
+                    : "border-border-subtle text-text-muted hover:text-text-main"
+                }`}
+              >
+                Rp {a.toLocaleString("id-ID")}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 mt-2 text-[11px] text-text-muted">
+            Atau isi sendiri:
+            <input
+              type="number"
+              min={10_000}
+              step={1000}
+              value={custom}
+              placeholder="mis. 150000"
+              onChange={(e) => setCustom(e.target.value)}
+              className="w-32 px-2 py-1 rounded-lg border border-border-subtle bg-surface-2 text-xs text-text-main focus:outline-none focus:border-brand-500"
+            />
+            IDR
+          </label>
         </div>
       </div>
       <div className="flex items-center gap-3 flex-wrap">
@@ -456,6 +497,7 @@ function TopUpCard() {
         )}
       </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
+      {notice && <p className="text-xs text-text-muted">{notice}</p>}
       {Array.isArray(history) && history.length > 0 && (
         <div className="pt-2 border-t border-border-subtle">
           <div className="text-[11px] font-medium text-text-muted mb-1.5">Riwayat top-up</div>
@@ -633,6 +675,10 @@ function UsageRow({ r }) {
             <div className="text-text-main tabular-nums">
               {fmtCompact(r.promptTokens)} / {fmtCompact(r.completionTokens)}
             </div>
+          </div>
+          <div className="text-right">
+            <div className="text-text-muted">Biaya</div>
+            <div className="text-text-main tabular-nums">{fmtMoney(r.cost)}</div>
           </div>
           <div className={`text-right w-12 ${r.status && r.status !== "ok" ? "text-red-500" : ""}`}>
             <div className="text-text-muted">Status</div>

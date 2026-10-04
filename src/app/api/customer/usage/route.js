@@ -1,0 +1,68 @@
+import crypto from "node:crypto";
+import { NextResponse } from "next/server";
+import { requireCustomerSession } from "@/lib/auth/customerSession.js";
+import { getAdapter } from "@/lib/db/driver.js";
+import { getActiveKeyForCustomer } from "@/lib/db/repos/customerKeysRepo.js";
+
+export const dynamic = "force-dynamic";
+
+// GET /api/customer/usage?period=today|7d|30d|all
+// Session-gated usage history scoped to the caller's active customer key:
+// usageHistory rows store the presented plaintext apiKey; we match it against
+// this customer's keyHash (same HMAC scheme as customerKeysRepo).
+const PERIODS = {
+  today: () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  },
+  "7d": () => new Date(Date.now() - 7 * 864e5),
+  "30d": () => new Date(Date.now() - 30 * 864e5),
+  all: () => null,
+};
+
+function hashKey(plaintext) {
+  const secret = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
+  return crypto.createHmac("sha256", secret).update(plaintext).digest("hex");
+}
+
+export async function GET(request) {
+  const session = await requireCustomerSession(request);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const active = await getActiveKeyForCustomer(session.customerId);
+  if (!active) return NextResponse.json({ items: [] });
+
+  const url = new URL(request.url);
+  const period = PERIODS[url.searchParams.get("period")] ? url.searchParams.get("period") : "all";
+  const startDate = PERIODS[period]?.();
+
+  // usageHistory stores the presented plaintext apiKey per request. Pull the
+  // recent window raw, hash-match in memory against this customer's keyHash,
+  // and drop the plaintext column before mapping — it never reaches the
+  // response. ponytail: scan capped at 1000 latest rows per query; if volume
+  // makes that wrong, add a keyHash column + index to usageHistory (phase 6)
+  // and move the filter into SQL.
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey
+     FROM usageHistory WHERE timestamp >= COALESCE(?, '1970-01-01')
+     ORDER BY id DESC LIMIT 1000`,
+    [startDate ? startDate.toISOString() : null]
+  );
+  const keyHash = active.keyHash;
+  const items = rows
+    .filter((r) => hashKey(r.apiKey) === keyHash)
+    .slice(0, 100)
+    .map((r) => ({
+      timestamp: r.timestamp,
+      provider: r.provider,
+      model: r.model,
+      promptTokens: r.promptTokens ?? 0,
+      completionTokens: r.completionTokens ?? 0,
+      cost: r.cost,
+      status: r.status,
+      mask: active.keyMask,
+    }));
+  return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+}

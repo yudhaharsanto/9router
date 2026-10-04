@@ -10,11 +10,9 @@ import {
   Button,
   Input,
   SegmentedControl,
-  CapacityBadges,
 } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
 function fmt(n) {
   return (Number(n) || 0).toLocaleString();
@@ -280,13 +278,202 @@ function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
         </div>
         <div className="flex flex-col gap-4">
           <UsageCard mask={me.key?.mask} />
-          <LedgerCard />
+          <TopUpCard />
         </div>
       </div>
 
-      <SmartCombosSection />
-      {plaintext && <ModelsList apiKey={plaintext} origin={origin} />}
+      <PublicModelsCard />
+
+      <LedgerCard />
     </div>
+  );
+}
+
+// ── Harga model publish: official → harga customer (setelah diskon) → cache % ──
+function PublicModelsCard() {
+  const [items, setItems] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/customer/pricing")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => !cancelled && setItems(d.items || []))
+      .catch(() => !cancelled && setItems([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-primary">Harga Model</h3>
+        <span className="text-[11px] text-text-muted">USD per 1M token</span>
+      </div>
+      {items === null ? (
+        <div className="text-xs text-text-muted py-4 text-center">Memuat…</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs text-text-muted py-4 text-center">
+          Belum ada model yang dipublikasikan.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-text-muted border-b border-border-subtle">
+                <th className="py-2 pr-3 font-medium">Model</th>
+                <th className="py-2 pr-3 font-medium text-right">Official</th>
+                <th className="py-2 pr-3 font-medium text-right">Harga Kamu</th>
+                <th className="py-2 font-medium text-right">Cache</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {items.map((m) => (
+                <tr key={m.name} className="hover:bg-surface-2/50 transition-colors">
+                  <td className="py-2 pr-3">
+                    <CopyBtn value={m.name} title="Copy nama model" />
+                    <code className="ml-1.5 font-mono text-text-main">{m.name}</code>
+                  </td>
+                  <td className="py-2 pr-3 text-right text-text-muted tabular-nums">
+                    {m.official
+                      ? `$${fmtRate(m.official.input)} / $${fmtRate(m.official.output)}`
+                      : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-semibold text-primary tabular-nums">
+                    ${fmtRate(m.sell.input)} / ${fmtRate(m.sell.output)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-text-muted">
+                    {m.sell.cachedPct != null ? `${m.sell.cachedPct}%` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[11px] text-text-muted mt-3">
+        &ldquo;Harga Kamu&rdquo; = harga final setelah diskon yang dipakai billing. Cache = harga input
+        saat prompt ter-cache, sebagai % dari harga input.
+      </p>
+    </Card>
+  );
+}
+
+// USD/1M → tampilan pendek (max 4 desimal, trailing zero dipangkas).
+function fmtRate(n) {
+  return String(parseFloat((Number(n) || 0).toFixed(4)));
+}
+
+// ── Top up balance via Tako ──
+const TOPUP_AMOUNTS_IDR = [10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
+
+const TOPUP_STATUS_LABEL = {
+  pending: "Menunggu pembayaran",
+  paid: "Berhasil",
+  failed: "Gagal",
+  expired: "Kedaluwarsa",
+};
+
+function TopUpCard() {
+  const [amount, setAmount] = useState(TOPUP_AMOUNTS_IDR[2]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [paymentUrl, setPaymentUrl] = useState(null);
+  const [history, setHistory] = useState(null);
+
+  const loadHistory = useCallback(() => {
+    fetch("/api/customer/topups?limit=10")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => setHistory(d.items || []))
+      .catch(() => setHistory([]));
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  const startTopup = async () => {
+    setBusy(true);
+    setError("");
+    setPaymentUrl(null);
+    try {
+      const res = await fetch("/api/customer/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountIdr: amount }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || `Gagal (${res.status})`);
+      } else {
+        setPaymentUrl(data.topup?.paymentUrl || null);
+        loadHistory();
+        if (!data.topup?.paymentUrl) {
+          setError("Top-up dibuat. Menunggu konfirmasi pembayaran.");
+        }
+      }
+    } catch (err) {
+      setError(String(err?.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="flex flex-col gap-3 px-4 py-4">
+      <div>
+        <h3 className="text-sm font-semibold text-primary mb-2">Top Up Balance</h3>
+        <div className="flex flex-wrap gap-2">
+          {TOPUP_AMOUNTS_IDR.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => setAmount(a)}
+              className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                amount === a
+                  ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
+                  : "border-border-subtle text-text-muted hover:text-text-main"
+              }`}
+            >
+              Rp {a.toLocaleString("id-ID")}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button onClick={startTopup} disabled={busy} size="sm">
+          {busy ? "Memproses…" : "Buat Pembayaran"}
+        </Button>
+        {paymentUrl && (
+          <a
+            href={paymentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-brand-500 underline font-medium"
+          >
+            Buka halaman pembayaran →
+          </a>
+        )}
+      </div>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+      {Array.isArray(history) && history.length > 0 && (
+        <div className="pt-2 border-t border-border-subtle">
+          <div className="text-[11px] font-medium text-text-muted mb-1.5">Riwayat top-up</div>
+          <ul className="space-y-1">
+            {history.map((t) => (
+              <li key={t.id} className="flex items-center justify-between text-xs">
+                <span className="text-text-main tabular-nums">
+                  Rp {Number(t.amountIdr).toLocaleString("id-ID")}
+                </span>
+                <span className="text-text-muted tabular-nums">
+                  +{fmtMoney(t.creditedMicros)} · {TOPUP_STATUS_LABEL[t.status] || t.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -583,300 +770,3 @@ function CodeBlock({ code, label }) {
   );
 }
 
-function SmartCombosSection() {
-  const [combos, setCombos] = useState([]);
-  const [aliases, setAliases] = useState({});
-  const [expanded, setExpanded] = useState(true);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/public/combos")
-      .then((r) => r.json())
-      .then((d) => {
-        setCombos(d.combos || []);
-        setAliases(d.aliases || {});
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, []);
-
-  if (!loaded) return null;
-  if (!combos.length) return null;
-
-  const bareId = (s) => {
-    const str = String(s);
-    const i = str.indexOf("/");
-    return i >= 0 ? str.slice(i + 1) : str;
-  };
-
-  const aliasesByTarget = (() => {
-    const map = {};
-    for (const [aliasName, target] of Object.entries(aliases || {})) {
-      const t = String(target);
-      (map[t] ||= []).push(aliasName);
-      const b = bareId(t);
-      if (b !== t) (map[`bare:${b}`] ||= []).push(aliasName);
-    }
-    return map;
-  })();
-
-  const aliasesFor = (m) => {
-    const set = new Set([
-      ...(aliasesByTarget[m] || []),
-      ...(aliasesByTarget[`bare:${bareId(m)}`] || []),
-    ]);
-    return [...set];
-  };
-
-  return (
-    <Card className="flex flex-col gap-3">
-      <button
-        type="button"
-        onClick={() => setExpanded((s) => !s)}
-        className="flex items-center justify-between w-full"
-      >
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-lg bg-brand-500/10 text-brand-500 flex items-center justify-center">
-            <span className="material-symbols-outlined text-xl">hub</span>
-          </div>
-          <div className="text-left">
-            <h3 className="text-sm font-semibold text-primary">Smart Combos</h3>
-            <p className="text-[11px] text-text-muted">
-              {combos.length} routing alias{combos.length !== 1 ? "es" : ""} —
-              single name routes to multiple upstream models
-            </p>
-          </div>
-        </div>
-        <span className="material-symbols-outlined text-text-muted">
-          {expanded ? "expand_less" : "expand_more"}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border-subtle text-text-muted">
-                <th className="text-left py-2 px-2 font-medium">Combo Name</th>
-                <th className="text-center py-2 px-2 font-medium">Members</th>
-                <th className="text-left py-2 px-2 font-medium">
-                  Routes To (in order)
-                </th>
-                <th className="text-center py-2 px-2 font-medium">Copy</th>
-              </tr>
-            </thead>
-            <tbody>
-              {combos.map((combo, idx) => {
-                const models = combo.models || [];
-                return (
-                  <tr
-                    key={combo.id || idx}
-                    className="border-b border-border-subtle/50 hover:bg-surface-2/50 transition-colors"
-                  >
-                    <td className="py-2.5 px-2">
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-brand-500 text-[18px]">
-                          hub
-                        </span>
-                        <code className="font-mono text-xs font-medium">
-                          {combo.name}
-                        </code>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-500/10 text-brand-500 text-[11px] font-medium">
-                        {models.length}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {models.map((m, mi) => {
-                          const al = aliasesFor(m);
-                          return (
-                            <span
-                              key={mi}
-                              className="inline-flex items-center px-2 py-0.5 rounded bg-surface-2 text-text-main text-[11px] font-mono"
-                              title={
-                                al.length > 0 ? `Aliases: ${al.join(", ")}` : ""
-                              }
-                            >
-                              {bareId(m)}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      <CopyBtn value={combo.name} title="Copy combo name" />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function ModelsList({ apiKey, origin }) {
-  const [models, setModels] = useState(null);
-  const [combos, setCombos] = useState([]);
-  const [filter, setFilter] = useState("");
-
-  useEffect(() => {
-    fetch("/api/public/combos")
-      .then((r) => r.json())
-      .then((d) => setCombos(d.combos || []))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${origin}/v1/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-      .then((r) => r.json())
-      .then((json) => {
-        if (!cancelled) {
-          const comboSet = new Set(combos.map((c) => c.name));
-          setModels(
-            (json?.data || json?.models || [])
-              .map((m) => m.id || m.name)
-              .filter(Boolean)
-              .filter((m) => {
-                const bid = m.includes("/") ? m.split("/")[1] : m;
-                return !comboSet.has(m) && !comboSet.has(bid);
-              }),
-          );
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setModels([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiKey, origin, combos]);
-
-  const bareId = (s) => {
-    const str = String(s);
-    const i = str.indexOf("/");
-    return i >= 0 ? str.slice(i + 1) : str;
-  };
-
-  const getCaps = (modelStr) => {
-    const provider = modelStr.includes("/") ? modelStr.split("/")[0] : "";
-    const model = modelStr.includes("/")
-      ? modelStr.slice(modelStr.indexOf("/") + 1)
-      : modelStr;
-    return getCapabilitiesForModel(provider, model);
-  };
-
-  const filtered = (models || []).filter((m) => {
-    if (!filter) return true;
-    const q = filter.toLowerCase();
-    return m.toLowerCase().includes(q);
-  });
-
-  return (
-    <Card padding="md">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-text-muted flex items-center gap-1">
-          <span className="material-symbols-outlined text-[15px]">
-            grid_view
-          </span>
-          Models ({models === null ? "…" : models.length})
-        </span>
-      </div>
-
-      <Input
-        placeholder="Filter models…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        icon="search"
-        size="sm"
-        className="mb-2"
-      />
-
-      {models === null ? (
-        <div className="flex items-center justify-center py-4 text-text-muted text-xs">
-          <span className="material-symbols-outlined animate-spin text-[16px] mr-1.5">
-            progress_activity
-          </span>
-          Loading…
-        </div>
-      ) : filtered.length === 0 ? (
-        <p className="text-xs text-text-muted text-center py-4">
-          No models match.
-        </p>
-      ) : (
-        <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border-subtle">
-          <table className="w-full text-[11px]">
-            <thead className="sticky top-0 bg-surface-2 text-text-muted">
-              <tr>
-                <th className="text-left py-2 px-3 font-medium">Model</th>
-                <th className="text-center py-2 px-2 font-medium">CAPS</th>
-                <th className="text-center py-2 px-2 font-medium w-10">Copy</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-subtle/50">
-              {filtered.map((m, i) => {
-                const caps = getCaps(m);
-                return (
-                  <tr
-                    key={i}
-                    className="hover:bg-surface-2/50 transition-colors cursor-pointer"
-                    onClick={() => {
-                      copyText(m);
-                    }}
-                  >
-                    <td className="py-1.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <ProviderIcon
-                          src={
-                            providerIdFromModel(m)
-                              ? `/providers/${providerIdFromModel(m)}.png`
-                              : undefined
-                          }
-                          alt={m}
-                          size={16}
-                          className="rounded-md shrink-0 bg-surface-2"
-                          fallbackText={(m || "?").slice(0, 2).toUpperCase()}
-                        />
-                        <code className="text-[11px] font-mono text-text-main truncate">
-                          {m}
-                        </code>
-                      </div>
-                    </td>
-                    <td className="py-1.5 px-2 text-center">
-                      <CapacityBadges caps={caps} size={14} />
-                    </td>
-                    <td className="py-1.5 px-2 text-center">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copyText(m);
-                        }}
-                        className="p-1 rounded text-text-muted hover:text-primary transition-colors"
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-[13px]">
-                          content_copy
-                        </span>
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="text-[10px] text-text-muted mt-1.5">
-        {filtered.length} of {models?.length || 0} shown
-      </p>
-    </Card>
-  );
-}

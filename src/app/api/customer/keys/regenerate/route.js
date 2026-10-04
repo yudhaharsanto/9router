@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/auth/customerSession";
 import { getPublicOrigin } from "@/lib/auth/oidc";
 import { getCustomerById } from "@/lib/db";
+import { encryptKeyForStorage } from "@/lib/db/repos/customerKeysRepo.js";
 import { getAdapter } from "@/lib/db/driver.js";
 
 export const dynamic = "force-dynamic";
@@ -53,12 +54,13 @@ export async function POST(request) {
         .update(plaintext)
         .digest("hex"),
       keyMask: `sk-cust-…${plaintext.slice(-4)}`,
+      keyEnc: encryptKeyForStorage(plaintext),
       revokedAt: null,
       createdAt: new Date().toISOString(),
     };
     db.run(
-      `INSERT INTO customerKeys(id, customerId, keyHash, keyMask, revokedAt, createdAt) VALUES(?, ?, ?, ?, NULL, ?)`,
-      [fresh.id, fresh.customerId, fresh.keyHash, fresh.keyMask, fresh.createdAt]
+      `INSERT INTO customerKeys(id, customerId, keyHash, keyMask, keyEnc, revokedAt, createdAt) VALUES(?, ?, ?, ?, ?, NULL, ?)`,
+      [fresh.id, fresh.customerId, fresh.keyHash, fresh.keyMask, fresh.keyEnc, fresh.createdAt]
     );
     return { plaintext, fresh };
   });

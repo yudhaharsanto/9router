@@ -10,7 +10,9 @@ const TAKO_TXN_URL = (txnId) => `https://tako.id/api/v1/transactions/${encodeURI
 
 // Fetch one transaction's status from Tako. Returns "paid" | <other-string> | null.
 async function fetchTakoStatus(txnId) {
-  const merchantKey = (process.env.TAKO_MERCHANT_KEY || "").trim();
+  const { getSettings } = await import("@/lib/db/repos/settingsRepo.js");
+  const settings = await getSettings();
+  const merchantKey = (settings.takoMerchantKey || process.env.TAKO_MERCHANT_KEY || "").trim();
   if (!merchantKey) return null;
   try {
     const res = await fetch(TAKO_TXN_URL(txnId), {

@@ -17,7 +17,7 @@ const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
 export async function GET() {
   try {
     const settings = await getSettings();
-    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, ...safeSettings } = settings;
+    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     safeSettings.googleOAuthConfigured = !!(safeSettings.googleOAuthClientId && googleOAuthClientSecret);
     safeSettings.takoCallbackConfigured = !!takoCallbackSecret;
@@ -90,6 +90,12 @@ export async function PATCH(request) {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "takoMerchantKey")) {
+      if (!body.takoMerchantKey || !String(body.takoMerchantKey).trim()) {
+        delete body.takoMerchantKey;
+      }
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)
@@ -122,10 +128,11 @@ export async function PATCH(request) {
         .catch((error) => console.warn("[AutoPing] settings update failed:", error.message));
     }
 
-    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, ...safeSettings } = settings;
+    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     safeSettings.googleOAuthConfigured = !!(safeSettings.googleOAuthClientId && googleOAuthClientSecret);
     safeSettings.takoCallbackConfigured = !!takoCallbackSecret;
+    safeSettings.takoMerchantConfigured = !!takoMerchantKey;
     return NextResponse.json(safeSettings, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);

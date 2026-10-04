@@ -71,7 +71,7 @@ export default function CustomersPage() {
   // Admin billing tools (phase 7)
   const [reconResult, setReconResult] = useState(null);
   const [reconBusy, setReconBusy] = useState(false);
-  const [settings, setSettings] = useState({ discountRate: 0.5, minMarginPct: 0, marginBehavior: "skip", idrPerUsd: "", takoUsername: "" });
+  const [settings, setSettings] = useState({ discountRate: 0.5, minMarginPct: 0, marginBehavior: "skip", idrPerUsd: "", takoUsername: "", takoMerchantKey: "", takoCallbackSecret: "", takoCallbackConfigured: false, takoMerchantConfigured: false });
   const [settingsSaved, setSettingsSaved] = useState(false);
   // Read-only view of what customers are billed: official catalog price × (1 − discountRate).
   const [pricing, setPricing] = useState(null);
@@ -105,6 +105,10 @@ export default function CustomersPage() {
               marginBehavior: s.marginBehavior || "skip",
               idrPerUsd: s.idrPerUsd || "",
               takoUsername: s.takoUsername || "",
+              takoMerchantKey: "",
+              takoCallbackSecret: "",
+              takoMerchantConfigured: !!s.takoMerchantConfigured,
+              takoCallbackConfigured: !!s.takoCallbackConfigured,
             });
           }
         }
@@ -304,6 +308,8 @@ export default function CustomersPage() {
           marginBehavior: settings.marginBehavior,
           idrPerUsd: settings.idrPerUsd,
           takoUsername: settings.takoUsername,
+          ...(settings.takoMerchantKey.trim() ? { takoMerchantKey: settings.takoMerchantKey.trim() } : {}),
+          ...(settings.takoCallbackSecret.trim() ? { takoCallbackSecret: settings.takoCallbackSecret.trim() } : {}),
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -500,6 +506,28 @@ export default function CustomersPage() {
               type="text"
               value={settings.takoUsername}
               onChange={(e) => setSettings((s) => ({ ...s, takoUsername: e.target.value }))}
+              className="rounded-md border border-border bg-bg-subtle px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-text-muted">
+              Tako merchant key {settings.takoMerchantConfigured ? <span className="text-green-600">(configured)</span> : <span className="text-amber-600">(not set — manual top-up only)</span>}
+            </span>
+            <input
+              type="password" autoComplete="new-password" placeholder={settings.takoMerchantConfigured ? "•••••••• (saved)" : ""}
+              value={settings.takoMerchantKey}
+              onChange={(e) => setSettings((s) => ({ ...s, takoMerchantKey: e.target.value }))}
+              className="rounded-md border border-border bg-bg-subtle px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-text-muted">
+              Tako callback secret {settings.takoCallbackConfigured ? <span className="text-green-600">(configured)</span> : <span className="text-amber-600">(not set — webhook unsigned)</span>}
+            </span>
+            <input
+              type="password" autoComplete="new-password" placeholder={settings.takoCallbackConfigured ? "•••••••• (saved)" : ""}
+              value={settings.takoCallbackSecret}
+              onChange={(e) => setSettings((s) => ({ ...s, takoCallbackSecret: e.target.value }))}
               className="rounded-md border border-border bg-bg-subtle px-3 py-2"
             />
           </label>

@@ -187,6 +187,10 @@ export const TABLES = {
       keyHash: "TEXT UNIQUE NOT NULL",
       // Display form: "sk-cust-…last4". Never the plaintext.
       keyMask: "TEXT NOT NULL",
+      // AES-256-GCM ciphertext of the plaintext key (iv:tag:hex), keyed off
+      // JWT_SECRET — lets the customer re-reveal without regenerating.
+      // NULL for keys created before this column existed.
+      keyEnc: "TEXT",
       // RFC3339 timestamp when revoked; NULL = active.
       revokedAt: "TEXT",
       createdAt: "TEXT NOT NULL",

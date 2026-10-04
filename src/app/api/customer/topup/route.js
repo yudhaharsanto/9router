@@ -47,7 +47,9 @@ export async function POST(request) {
   const topup = await createTopup({ customerId: session.customerId, amountIdr, rateMilli });
 
   const username = (settings.takoUsername || "").trim();
-  const merchantKey = (process.env.TAKO_MERCHANT_KEY || "").trim();
+  // Merchant key lives in settings (set from the admin dashboard); the env var
+  // is the legacy/override path. Settings value wins when both exist.
+  const merchantKey = (settings.takoMerchantKey || process.env.TAKO_MERCHANT_KEY || "").trim();
   if (!username || !merchantKey) {
     // Manual mode: the row stays pending so the request is auditable; an
     // admin credits it via balance adjustment (or the Tako webhook if a key

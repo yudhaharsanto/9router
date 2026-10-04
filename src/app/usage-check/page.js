@@ -578,10 +578,40 @@ function BalanceCard({ balanceMicros }) {
   );
 }
 
-function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
+function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
   const [show, setShow] = useState(false);
+  const [revealed, setRevealed] = useState(null);
+  const [revealError, setRevealError] = useState("");
+  const [revealBusy, setRevealBusy] = useState(false);
   const v1Url = origin ? `${origin}/v1` : "/v1";
   const docModel = "cc/";
+
+  // Re-reveal: the key is stored encrypted server-side, so the customer can
+  // view/copy it again without regenerating. 409 (legacy key) → hint regenerate.
+  const revealKey = async () => {
+    setRevealBusy(true);
+    setRevealError("");
+    try {
+      const res = await fetch("/api/customer/keys/reveal", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.key) {
+        setRevealed(body.key);
+        setShow(true);
+      } else {
+        setRevealError(
+          res.status === 409
+            ? "This key can't be shown again. Regenerate to get a new one."
+            : body.error || `Failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      setRevealError(String(err?.message || err));
+    } finally {
+      setRevealBusy(false);
+    }
+  };
+
+  const shownKey = plaintext || (show ? revealed : null);
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
@@ -594,16 +624,28 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
         </Button>
       </div>
 
-      {plaintext ? (
+      {shownKey ? (
         <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
-          <code className="text-xs flex-1 truncate font-mono">{plaintext}</code>
-          <CopyBtn value={plaintext} title="Copy API key" />
+          <code className="text-xs flex-1 truncate font-mono">{shownKey}</code>
+          <CopyBtn value={shownKey} title="Copy API key" />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={show ? "visibility_off" : "visibility"}
+            onClick={() => setShow((v) => !v)}
+          >
+            {show ? "Hide" : "Show"}
+          </Button>
         </div>
       ) : (
         <div className="flex items-center gap-2 bg-surface-2 rounded-[10px] px-3 py-2">
           <code className="text-xs flex-1 truncate font-mono">{mask || "—"}</code>
+          <Button variant="ghost" size="sm" icon="visibility" onClick={revealKey} disabled={revealBusy}>
+            {revealBusy ? "…" : "Show key"}
+          </Button>
         </div>
       )}
+      {revealError && <p className="text-[11px] text-red-500">{revealError}</p>}
       {plaintext ? (
         <p className="text-[11px] text-warning flex items-start gap-1">
           <span className="material-symbols-outlined text-[14px] mt-px">warning</span>
@@ -611,8 +653,8 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
         </p>
       ) : (
         <p className="text-[11px] text-text-muted">
-          The full key is shown only when created. Use “Regenerate” to issue a new one
-          (the current key stops working immediately).
+          The key stays available here — show or copy it anytime. Regenerate issues a
+          new key (the current one stops working immediately).
         </p>
       )}
 
@@ -625,7 +667,7 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
         <CodeBlock
           label="Chat completion"
           code={`curl ${v1Url}/chat/completions \\
-  -H "Authorization: Bearer ${plaintext || "YOUR_API_KEY"}" \\
+  -H "Authorization: Bearer ${shownKey || "YOUR_API_KEY"}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${docModel}",

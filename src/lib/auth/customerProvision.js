@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "@/lib/db/driver.js";
 import { getOrCreateCustomer, getActiveKeyForCustomer } from "@/lib/db";
+import { encryptKeyForStorage } from "@/lib/db/repos/customerKeysRepo.js";
 
 const REVEAL_TTL_MS = 10 * 60 * 1000;
 const revealStore = new Map(); // token -> { customerId, plaintext, expiresAt }
@@ -46,12 +47,13 @@ function insertCustomerKey(db, customerId) {
     customerId,
     keyHash: crypto.createHmac("sha256", API_KEY_SECRET).update(plaintext).digest("hex"),
     keyMask: `sk-cust-…${plaintext.slice(-4)}`,
+    keyEnc: encryptKeyForStorage(plaintext),
     revokedAt: null,
     createdAt: new Date().toISOString(),
   };
   db.run(
-    `INSERT INTO customerKeys(id, customerId, keyHash, keyMask, revokedAt, createdAt) VALUES(?, ?, ?, ?, NULL, ?)`,
-    [record.id, record.customerId, record.keyHash, record.keyMask, record.createdAt]
+    `INSERT INTO customerKeys(id, customerId, keyHash, keyMask, keyEnc, revokedAt, createdAt) VALUES(?, ?, ?, ?, ?, NULL, ?)`,
+    [record.id, record.customerId, record.keyHash, record.keyMask, record.keyEnc, record.createdAt]
   );
   return { key: plaintext, record };
 }

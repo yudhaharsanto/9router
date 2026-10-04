@@ -57,7 +57,7 @@ export {
   getOrCreateCustomer, getCustomerById, setCustomerStatus,
 } from "./repos/customersRepo.js";
 export {
-  createCustomerKey, validateCustomerKey, revokeCustomerKey, getActiveKeyForCustomer,
+  createCustomerKey, validateCustomerKey, revokeCustomerKey, getActiveKeyForCustomer, revealCustomerKey,
 } from "./repos/customerKeysRepo.js";
 export {
   getBalance, creditCustomer, holdReserve, settleUsage, adjustBalance, getLedger, MICROS_PER_USD,

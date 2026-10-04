@@ -36,9 +36,12 @@ const DEFAULT_SETTINGS = {
   oidcLoginLabel: "Sign in with OIDC",
   googleOAuthClientId: "",
   googleOAuthClientSecret: "",
-  // Customer billing (phase 4): Tako top-up + FX rate.
+  // Customer billing (phase 4): Tako top-up + FX rate. takoMerchantKey is the
+  // Tako API key (write-only: never returned by GET /api/settings; the portal
+  // shows only a "configured" flag).
   takoUsername: "",
   takoCallbackSecret: "",
+  takoMerchantKey: "",
   // Daily FX snapshot: IDR per USD. Empty = top-up creation blocked (no guessing).
   idrPerUsd: "",
   // Customer sell price = official × (1 − discountRate). 0.5 = half price.

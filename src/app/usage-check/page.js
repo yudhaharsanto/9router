@@ -355,11 +355,13 @@ const PRICE_SORTS = {
   name: (m) => m.name,
   official: (m) => (m.official ? m.official.input + m.official.output : -1),
   price: (m) => m.sell.input + m.sell.output,
+  price_idr: (m) => m.sell.input + m.sell.output,
   cache: (m) => (m.sell.cachedPct != null ? m.sell.cachedPct : -1),
 };
 
 function PublicModelsCard() {
   const [items, setItems] = useState(null);
+  const [idrPerUsd, setIdrPerUsd] = useState(null);
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -367,7 +369,11 @@ function PublicModelsCard() {
     let cancelled = false;
     fetch("/api/customer/pricing")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d) => !cancelled && setItems(d.items || []))
+      .then((d) => {
+        if (cancelled) return;
+        setItems(d.items || []);
+        setIdrPerUsd(Number(d.idrPerUsd) > 0 ? Number(d.idrPerUsd) : null);
+      })
       .catch(() => !cancelled && setItems([]));
     return () => {
       cancelled = true;
@@ -420,6 +426,7 @@ function PublicModelsCard() {
                   ["name", "Model", ""],
                   ["official", "Official", "pr-3 text-right"],
                   ["price", "Price", "pr-3 text-right"],
+                  ["price_idr", "IDR", "pr-3 text-right"],
                   ["cache", "Cache", "text-right"],
                 ].map(([key, label, extra]) => (
                   <th key={key} className={`py-2 font-medium cursor-pointer select-none hover:text-text-main ${extra || ""}`} onClick={() => toggleSort(key)}>
@@ -444,6 +451,11 @@ function PublicModelsCard() {
                   <td className="py-2 pr-3 text-right font-semibold text-primary tabular-nums">
                     ${fmtRate(m.sell.input)} / ${fmtRate(m.sell.output)}
                   </td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-text-muted">
+                    {idrPerUsd
+                      ? `Rp ${fmtIdr(m.sell.input * idrPerUsd)} / Rp ${fmtIdr(m.sell.output * idrPerUsd)}`
+                      : "—"}
+                  </td>
                   <td className="py-2 text-right tabular-nums text-text-muted">
                     {m.sell.cachedPct != null ? `${m.sell.cachedPct}%` : "—"}
                   </td>
@@ -454,8 +466,9 @@ function PublicModelsCard() {
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3">
-        &ldquo;Price&rdquo; is the final price after the discount, used for billing. &ldquo;Cache&rdquo; is the input
-        price when the prompt is cached, as a percentage of the input price.
+        &ldquo;Price&rdquo; is the final price after the discount, used for billing. &ldquo;IDR&rdquo; converts it at
+        the current top-up rate{idrPerUsd ? ` (Rp ${Math.round(idrPerUsd).toLocaleString("id-ID")} / USD)` : ""}.
+        &ldquo;Cache&rdquo; is the input price when the prompt is cached, as a percentage of the input price.
       </p>
     </Card>
   );
@@ -464,6 +477,13 @@ function PublicModelsCard() {
 // USD/1M → short display (max 4 decimals, trailing zeros trimmed).
 function fmtRate(n) {
   return String(parseFloat((Number(n) || 0).toFixed(4)));
+}
+
+// IDR/1M → compact display, rounded to a sensible digit count.
+function fmtIdr(n) {
+  const v = Number(n) || 0;
+  const digits = v >= 100_000 ? 0 : v >= 1_000 ? 1 : 2;
+  return v.toLocaleString("id-ID", { maximumFractionDigits: digits });
 }
 
 // ── Top up balance via Tako ──

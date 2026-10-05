@@ -87,8 +87,12 @@ export async function GET(request) {
   }));
 
   items.sort((a, b) => a.name.localeCompare(b.name));
+  // FX snapshot for IDR display. Empty rate = top-up is blocked anyway, so the
+  // portal simply omits the IDR column instead of guessing an exchange rate.
+  const ratePerUsd = Number(settings.idrPerUsd);
+  const idrPerUsd = Number.isFinite(ratePerUsd) && ratePerUsd > 0 ? ratePerUsd : null;
   return NextResponse.json(
-    { items },
+    { items, idrPerUsd },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

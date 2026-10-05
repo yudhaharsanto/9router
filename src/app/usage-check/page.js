@@ -355,7 +355,6 @@ const PRICE_SORTS = {
   name: (m) => m.name,
   official: (m) => (m.official ? m.official.input + m.official.output : -1),
   price: (m) => m.sell.input + m.sell.output,
-  price_idr: (m) => m.sell.input + m.sell.output,
   cache: (m) => (m.sell.cachedPct != null ? m.sell.cachedPct : -1),
 };
 
@@ -408,8 +407,15 @@ function PublicModelsCard() {
   return (
     <Card>
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-        <h3 className="text-sm font-semibold text-primary">Model pricing</h3>
-        <span className="text-[11px] text-text-muted">USD per 1M token, click a column to sort</span>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-primary">Model pricing</h3>
+          <span className="text-[11px] text-text-muted">Per 1M token</span>
+          <CurrencySlide
+            value={inIdr ? "IDR" : "USD"}
+            disabled={!idrPerUsd}
+            onChange={(v) => setInIdr(v === "IDR")}
+          />
+        </div>
       </div>
       {sorted === null ? (
         <div className="text-xs text-text-muted py-4 text-center">Loading…</div>
@@ -426,7 +432,6 @@ function PublicModelsCard() {
                   ["name", "Model", ""],
                   ["official", "Official", "pr-3 text-right"],
                   ["price", "Price", "pr-3 text-right"],
-                  ["price_idr", "IDR", "pr-3 text-right"],
                   ["cache", "Cache", "text-right"],
                 ].map(([key, label, extra]) => (
                   <th key={key} className={`py-2 font-medium cursor-pointer select-none hover:text-text-main ${extra || ""}`} onClick={() => toggleSort(key)}>
@@ -449,12 +454,9 @@ function PublicModelsCard() {
                       : "—"}
                   </td>
                   <td className="py-2 pr-3 text-right font-semibold text-primary tabular-nums">
-                    ${fmtRate(m.sell.input)} / ${fmtRate(m.sell.output)}
-                  </td>
-                  <td className="py-2 pr-3 text-right tabular-nums text-text-muted">
-                    {idrPerUsd
+                    {inIdr && idrPerUsd
                       ? `Rp ${fmtIdr(m.sell.input * idrPerUsd)} / Rp ${fmtIdr(m.sell.output * idrPerUsd)}`
-                      : "—"}
+                      : `$${fmtRate(m.sell.input)} / $${fmtRate(m.sell.output)}`}
                   </td>
                   <td className="py-2 text-right tabular-nums text-text-muted">
                     {m.sell.cachedPct != null ? `${m.sell.cachedPct}%` : "—"}
@@ -466,7 +468,7 @@ function PublicModelsCard() {
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3">
-        &ldquo;Price&rdquo; is the final price after the discount, used for billing. &ldquo;IDR&rdquo; converts it at
+        &ldquo;Price&rdquo; is the final price after the discount, used for billing. When IDR is on it converts at
         the current top-up rate{idrPerUsd ? ` (Rp ${Math.round(idrPerUsd).toLocaleString("id-ID")} / USD)` : ""}.
         &ldquo;Cache&rdquo; is the input price when the prompt is cached, as a percentage of the input price.
       </p>
@@ -484,6 +486,30 @@ function fmtIdr(n) {
   const v = Number(n) || 0;
   const digits = v >= 100_000 ? 0 : v >= 1_000 ? 1 : 2;
   return v.toLocaleString("id-ID", { maximumFractionDigits: digits });
+}
+
+// Two-position slide switch: USD off / IDR on.
+function CurrencySlide({ value, onChange, disabled }) {
+  const on = value === "IDR";
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label="Show prices in IDR"
+      disabled={disabled}
+      onClick={() => onChange(on ? "USD" : "IDR")}
+      className="relative inline-flex h-5 w-[76px] items-center rounded-full border border-border-subtle bg-surface-2 disabled:opacity-50 transition-colors"
+    >
+      <span
+        className={`absolute h-4 w-[34px] rounded-full bg-brand-500 transition-transform ${
+          on ? "translate-x-[38px]" : "translate-x-[2px]"
+        }`}
+      />
+      <span className={`absolute left-[8px] text-[9px] font-semibold ${on ? "text-text-muted" : "text-white"}`}>USD</span>
+      <span className={`absolute right-[6px] text-[9px] font-semibold ${on ? "text-white" : "text-text-muted"}`}>IDR</span>
+    </button>
+  );
 }
 
 // ── Top up balance via Tako ──

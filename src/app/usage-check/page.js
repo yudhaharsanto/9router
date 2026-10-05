@@ -361,6 +361,7 @@ const PRICE_SORTS = {
 function PublicModelsCard() {
   const [items, setItems] = useState(null);
   const [idrPerUsd, setIdrPerUsd] = useState(null);
+  const [inIdr, setInIdr] = useState(false);
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 

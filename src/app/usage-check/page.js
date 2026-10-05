@@ -5,12 +5,7 @@
 // API key, usage, ledger, pricing). QRIS top-up opens in a modal dialog.
 // The old password-based lookup (POST /api/public/key-usage) is retired.
 import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  Card,
-  Button,
-  SegmentedControl,
-  Modal,
-} from "@/shared/components";
+import { Card, Button, SegmentedControl } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
@@ -70,11 +65,9 @@ function providerIdFromModel(modelStr) {
 }
 
 const PORTAL_TABS = [
-  { id: "overview", label: "Overview", icon: "account_balance_wallet" },
   { id: "api", label: "API key", icon: "vpn_key" },
   { id: "usage", label: "Usage", icon: "monitoring" },
-  { id: "ledger", label: "Ledger", icon: "receipt_long" },
-  { id: "pricing", label: "Pricing", icon: "sell" },
+  { id: "topup", label: "Top up", icon: "account_balance_wallet" },
 ];
 
 export default function UsageCheckPage() {
@@ -134,6 +127,14 @@ export default function UsageCheckPage() {
     })();
   }, []);
 
+  // Re-pull balance/me after a top-up is credited server-side.
+  const refreshMe = useCallback(async () => {
+    try {
+      const r = await fetch("/api/customer/me", { headers: { "Cache-Control": "no-store" } });
+      if (r.ok) setMe(await r.json());
+    } catch {}
+  }, []);
+
   if (status === "loading") {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-4">
@@ -182,6 +183,7 @@ export default function UsageCheckPage() {
         setStatus("guest");
       }}
       origin={origin}
+      onRefresh={refreshMe}
     />
   );
 }
@@ -244,8 +246,8 @@ function GuestView() {
 
 /* ── Active portal: topbar (brand + balance + account) and nav tabs ── */
 
-function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, origin }) {
-  const [tab, setTab] = useState("overview");
+function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefresh, origin }) {
+  const [tab, setTab] = useState("api");
   const [plaintext, setPlaintext] = useState(revealedKey || null);
   const contentRef = useRef(null);
 
@@ -320,23 +322,29 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, origin }
       <main ref={contentRef} className="max-w-3xl mx-auto px-4 py-6 scroll-mt-24">
         {banner && <Banner banner={banner} />}
 
-        {tab === "overview" && (
+        {tab === "api" && (
           <div className="flex flex-col gap-4">
-            <BalanceCard balance={me.balance} />
-            <TopUpCard />
+            <ApiKeyCard
+              mask={me.key?.mask}
+              plaintext={plaintext}
+              onRegenerate={onRegenerate}
+              origin={origin}
+            />
+            <PublicModelsCard />
           </div>
         )}
-        {tab === "api" && (
-          <ApiKeyCard
-            mask={me.key?.mask}
-            plaintext={plaintext}
-            onRegenerate={onRegenerate}
-            origin={origin}
-          />
+        {tab === "usage" && (
+          <div className="flex flex-col gap-4">
+            <UsageCard />
+            <LedgerCard />
+          </div>
         )}
-        {tab === "usage" && <UsageCard />}
-        {tab === "ledger" && <LedgerCard />}
-        {tab === "pricing" && <PublicModelsCard />}
+        {tab === "topup" && (
+          <div className="flex flex-col gap-4">
+            <BalanceCard balance={me.balance} />
+            <TopUpCard refreshBalance={onRefresh} />
+          </div>
+        )}
       </main>
     </div>
   );
@@ -468,14 +476,30 @@ const TOPUP_STATUS_LABEL = {
   expired: "Expired",
 };
 
-function TopUpCard() {
+function TopUpCard({ refreshBalance }) {
   const [amount, setAmount] = useState(TOPUP_AMOUNTS_IDR[2]);
   const [custom, setCustom] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [payment, setPayment] = useState(null); // { paymentUrl, amountIdr, creditedMicros }
+  // Pending payment { id, paymentUrl, amountIdr }. Tako's API exposes no QR
+  // payload or QR image — their QRIS renders only on the tako.id/pay page,
+  // which can't be iframed (X-Frame-Options: SAMEORIGIN) — so the Tako page
+  // opens in a popup window and this card polls the row until credited.
+  const [payment, setPayment] = useState(null);
+  const [paid, setPaid] = useState(false);
   const [history, setHistory] = useState(null);
+  const popupRef = useRef(null);
+
+  const openPopup = (url) => {
+    const win = window.open(url || "", "qris-payment", "popup=yes,width=480,height=780");
+    popupRef.current = win;
+    if (win && !url) {
+      win.document.body.innerHTML =
+        '<p style="font-family:system-ui,sans-serif;padding:24px;color:#555">Opening QRIS payment…</p>';
+    }
+    return win;
+  };
 
   // Preset click clears the free-form field; typing in it clears the preset.
   const pickPreset = (a) => {
@@ -507,6 +531,9 @@ function TopUpCard() {
     setBusy(true);
     setError("");
     setNotice("");
+    setPaid(false);
+    // Open synchronously inside the click gesture so popup blockers allow it.
+    const win = openPopup();
     try {
       const res = await fetch("/api/customer/topup", {
         method: "POST",
@@ -515,29 +542,54 @@ function TopUpCard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        win?.close();
         setError(data.error || `Failed (${res.status})`);
       } else if (data.manual) {
         // No online payment configured server-side; the request is recorded
         // pending and the customer contacts the admin to settle it.
+        win?.close();
         setNotice(data.message || "Top-up recorded. Contact the admin to settle it.");
         setAmount(amountIdr);
         loadHistory();
       } else {
+        const t = data.topup || {};
+        setPayment({ id: t.id ?? null, paymentUrl: t.paymentUrl || null, amountIdr });
         setAmount(amountIdr);
-        setPayment({
-          id: data.topup?.id ?? null,
-          paymentUrl: data.topup?.paymentUrl || null,
-          amountIdr,
-          creditedMicros: data.topup?.creditedMicros ?? null,
-        });
+        if (win && t.paymentUrl) win.location.replace(t.paymentUrl);
+        else win?.close();
         loadHistory();
       }
     } catch (err) {
+      win?.close();
       setError(String(err?.message || err));
     } finally {
       setBusy(false);
     }
   };
+
+  // Poll while a payment is pending: the Tako webhook (or reconciliation)
+  // credits the balance server-side, we just reflect it here.
+  useEffect(() => {
+    if (!payment?.id || paid) return;
+    let cancelled = false;
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch("/api/customer/topups?limit=10", { headers: { "Cache-Control": "no-store" } });
+        const d = r.ok ? await r.json() : {};
+        const row = (d.items || []).find((t) => t.id === payment.id);
+        if (!cancelled && row?.status === "paid") {
+          setPaid(true);
+          popupRef.current?.close();
+          loadHistory();
+          refreshBalance?.();
+        }
+      } catch {}
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [payment, paid, loadHistory, refreshBalance]);
 
   return (
     <Card className="flex flex-col gap-3">
@@ -583,6 +635,27 @@ function TopUpCard() {
 
       {error && <p className="text-xs text-red-500">{error}</p>}
       {notice && <p className="text-xs text-text-muted">{notice}</p>}
+      {paid && (
+        <p className="text-xs text-success flex items-center gap-1">
+          <span className="material-symbols-outlined text-[15px]">check_circle</span>
+          Payment received. Balance updated.
+        </p>
+      )}
+      {payment && !paid && (
+        <div className="rounded-[10px] border border-border-subtle bg-surface-2 p-3 flex flex-col gap-2">
+          <span className="text-xs font-medium">
+            Waiting for payment · Rp {(payment.amountIdr || 0).toLocaleString("id-ID")}
+          </span>
+          <span className="text-[11px] text-text-muted">
+            Scan the QRIS in the payment window. This page updates automatically once paid.
+          </span>
+          {payment.paymentUrl && (
+            <Button variant="outline" size="sm" className="self-start" icon="qr_code_2" onClick={() => openPopup(payment.paymentUrl)}>
+              Open QRIS window
+            </Button>
+          )}
+        </div>
+      )}
 
       {Array.isArray(history) && history.length > 0 && (
         <div className="pt-3 border-t border-border-subtle">
@@ -602,139 +675,7 @@ function TopUpCard() {
         </div>
       )}
 
-      {/* Keyed by topup id so a new payment remounts with fresh QR/poll state. */}
-      <PaymentModal
-        key={payment?.id ?? "none"}
-        payment={payment}
-        onClose={() => setPayment(null)}
-        onPaid={loadHistory}
-      />
     </Card>
-  );
-}
-
-// QRIS payment dialog: shows the QR inline so the customer never leaves the
-// portal. Scans of paymentUrl render as an image; without a URL (manual
-// confirmation flows) we fall back to a copyable payment link.
-function PaymentModal({ payment, onClose, onPaid }) {
-  const [qrDataUrl, setQrDataUrl] = useState(null);
-  const [qrError, setQrError] = useState(false);
-  const [checkState, setCheckState] = useState("idle"); // idle | checking | paid
-
-  // Reset QR state when the dialog opens for a new payment, via the
-  // render-time key reset pattern (PaymentModal keyed by topup id).
-  useEffect(() => {
-    if (!payment?.paymentUrl) return;
-    let cancelled = false;
-    // Dynamic import keeps qrcode out of the initial bundle.
-    import("qrcode")
-      .then((mod) => mod.default.toDataURL(payment.paymentUrl, { margin: 1, width: 220 }))
-      .then((url) => !cancelled && setQrDataUrl(url))
-      .catch(() => !cancelled && setQrError(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [payment]);
-
-  // Poll the topup list while the dialog is open; flip to "paid" the moment
-  // the webhook/reconciliation credits the row. A ref guards the interval
-  // body against a stale "paid" check between renders.
-  const paidRef = useRef(false);
-  useEffect(() => {
-    paidRef.current = checkState === "paid";
-  }, [checkState]);
-  useEffect(() => {
-    if (!payment) return;
-    let cancelled = false;
-    const tick = async () => {
-      if (paidRef.current) return;
-      try {
-        const r = await fetch("/api/customer/topups?limit=10", { headers: { "Cache-Control": "no-store" } });
-        const d = r.ok ? await r.json() : {};
-        const row = payment.id ? (d.items || []).find((t) => t.id === payment.id) : null;
-        if (!cancelled && row?.status === "paid") {
-          setCheckState("paid");
-          onPaid?.();
-        }
-      } catch {}
-    };
-    const iv = setInterval(tick, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(iv);
-    };
-  }, [payment, onPaid]);
-  if (!payment) return null;
-  const paid = checkState === "paid";
-
-  return (
-    <Modal
-      isOpen
-      onClose={onClose}
-      title={paid ? "Payment received" : "Scan to pay"}
-      size="sm"
-      showTrafficLights={false}
-    >
-      <div className="flex flex-col items-center gap-4 text-center">
-        {paid ? (
-          <>
-            <div className="w-14 h-14 rounded-full bg-green-500/10 text-success flex items-center justify-center">
-              <span className="material-symbols-outlined text-3xl">check_circle</span>
-            </div>
-            <p className="text-sm text-text-main">
-              Your balance has been topped up.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-xs text-text-muted">
-              Pay <span className="font-semibold text-text-main">Rp {(payment.amountIdr || 0).toLocaleString("id-ID")}</span>{" "}
-              with any QRIS-compatible app (GoPay, OVO, DANA, bank apps).
-            </p>
-            {qrDataUrl ? (
-              <img
-                src={qrDataUrl}
-                alt="QRIS payment code"
-                width={220}
-                height={220}
-                className="rounded-[10px] border border-border-subtle bg-white p-2"
-              />
-            ) : qrError ? (
-              <div className="text-xs text-text-muted">
-                Could not render the QR code.{" "}
-                {payment.paymentUrl && (
-                  <a href={payment.paymentUrl} target="_blank" rel="noopener noreferrer" className="text-brand-500 underline font-medium">
-                    Open the payment page
-                  </a>
-                )}
-              </div>
-            ) : payment.paymentUrl ? (
-              <div className="w-[220px] h-[220px] rounded-[10px] bg-surface-2 animate-pulse" aria-label="Loading QR code" />
-            ) : (
-              <p className="text-xs text-text-muted">
-                Waiting for the payment link…
-              </p>
-            )}
-            {payment.paymentUrl && qrDataUrl && (
-              <a
-                href={payment.paymentUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-brand-500 underline font-medium"
-              >
-                Open payment page instead
-              </a>
-            )}
-            <p className="text-[11px] text-text-muted">
-              This dialog checks for payment automatically. Keep it open until the scan is confirmed.
-            </p>
-          </>
-        )}
-        <Button onClick={onClose} variant={paid ? "primary" : "ghost"} size="sm">
-          {paid ? "Done" : "Close"}
-        </Button>
-      </div>
-    </Modal>
   );
 }
 

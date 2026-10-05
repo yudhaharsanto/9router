@@ -514,7 +514,7 @@ function CurrencySlide({ value, onChange, disabled }) {
 }
 
 // ── Top up balance via Tako ──
-const TOPUP_AMOUNTS_IDR = [10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
+const TOPUP_AMOUNTS_IDR = [5_000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
 
 const TOPUP_STATUS_LABEL = {
   pending: "Awaiting payment",
@@ -571,8 +571,8 @@ function TopUpCard({ refreshBalance }) {
 
   const startTopup = async () => {
     const amountIdr = effectiveAmount();
-    if (!Number.isInteger(amountIdr) || amountIdr < 10_000) {
-      setError("Minimum amount is Rp 10,000.");
+    if (!Number.isInteger(amountIdr) || amountIdr < 1_000) {
+      setError("Minimum amount is Rp 1,000.");
       return;
     }
     setBusy(true);
@@ -664,10 +664,10 @@ function TopUpCard({ refreshBalance }) {
       </div>
 
       <label className="flex flex-col gap-1 text-[11px] text-text-muted">
-        Custom amount (IDR, min 10,000)
+        Custom amount (IDR, min 1,000)
         <input
           type="number"
-          min={10_000}
+          min={1_000}
           step={1000}
           value={custom}
           placeholder="e.g. 150000"

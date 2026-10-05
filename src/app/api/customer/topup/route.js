@@ -23,9 +23,9 @@ export async function POST(request) {
 
   const body = await request.json().catch(() => ({}));
   const amountIdr = Number(body?.amountIdr);
-  if (!Number.isInteger(amountIdr) || amountIdr < 10_000 || amountIdr > 100_000_000) {
+  if (!Number.isInteger(amountIdr) || amountIdr < 1_000 || amountIdr > 100_000_000) {
     return NextResponse.json(
-      { error: "amountIdr must be an integer between 10000 and 100000000" },
+      { error: "amountIdr must be an integer between 1000 and 100000000" },
       { status: 400 },
     );
   }

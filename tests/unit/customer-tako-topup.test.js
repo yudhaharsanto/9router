@@ -178,7 +178,7 @@ describe("POST /api/customer/topup", () => {
     const mod = await import("@/app/api/customer/topup/route.js");
     const res = await mod.POST(req("/api/customer/topup", token, {
       method: "POST",
-      body: JSON.stringify({ amountIdr: 5000 }),
+      body: JSON.stringify({ amountIdr: 500 }),
     }));
     expect(res.status).toBe(400);
   });

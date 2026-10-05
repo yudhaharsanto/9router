@@ -1,15 +1,15 @@
 "use client";
 
 // Customer portal — session-gated via crx_session (Google OAuth, phase 2).
-// Guest view: sign-in with Google. Active view: balance, API key (plaintext
-// shown exactly once via the one-time reveal flow), usage history, ledger.
+// Guest view: sign-in with Google. Active view: tabbed portal (balance,
+// API key, usage, ledger, pricing). QRIS top-up opens in a modal dialog.
 // The old password-based lookup (POST /api/public/key-usage) is retired.
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Card,
   Button,
-  Input,
   SegmentedControl,
+  Modal,
 } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
@@ -69,6 +69,14 @@ function providerIdFromModel(modelStr) {
   return ALIAS_TO_ID[prefix] || prefix;
 }
 
+const PORTAL_TABS = [
+  { id: "overview", label: "Overview", icon: "account_balance_wallet" },
+  { id: "api", label: "API key", icon: "vpn_key" },
+  { id: "usage", label: "Usage", icon: "monitoring" },
+  { id: "ledger", label: "Ledger", icon: "receipt_long" },
+  { id: "pricing", label: "Pricing", icon: "sell" },
+];
+
 export default function UsageCheckPage() {
   // status: loading | guest | active | disabled
   const [status, setStatus] = useState("loading");
@@ -82,8 +90,6 @@ export default function UsageCheckPage() {
 
   useEffect(() => {
     (async () => {
-      const origin = typeof window !== "undefined" ? window.location.origin : "";
-
       const params = new URLSearchParams(window.location.search);
       const error = params.get("error");
       const welcome = params.get("welcome");
@@ -130,68 +136,77 @@ export default function UsageCheckPage() {
 
   if (status === "loading") {
     return (
-      <div className="min-h-screen flex items-start justify-center bg-bg p-4 relative overflow-hidden">
-        <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
-        <div className="relative z-10 w-full max-w-md mx-auto mt-8 sm:mt-12">
-          <Card className="flex items-center justify-center py-10">
-            <span className="material-symbols-outlined animate-spin text-text-muted text-2xl">
-              progress_activity
-            </span>
-          </Card>
-        </div>
+      <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+        <span className="material-symbols-outlined animate-spin text-text-muted text-2xl">
+          progress_activity
+        </span>
       </div>
     );
   }
 
-  const inPortal = status === "active" || status === "disabled";
+  if (status === "guest") {
+    return (
+      <Shell>
+        {banner && <Banner banner={banner} />}
+        <GuestView />
+      </Shell>
+    );
+  }
 
+  if (status === "disabled") {
+    return (
+      <Shell>
+        <Card className="text-center py-10">
+          <h1 className="text-xl font-bold text-primary mb-1">Account disabled</h1>
+          <p className="text-sm text-text-muted">
+            This account has been disabled by the administrator.
+          </p>
+          <Button variant="ghost" size="sm" className="mt-4" onClick={logout}>
+            Sign out
+          </Button>
+        </Card>
+      </Shell>
+    );
+  }
+
+  // active
   return (
-    <div className="min-h-screen flex items-start justify-center bg-bg p-4 relative overflow-hidden">
-      <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
-      <div
-        className={`relative z-10 w-full mt-8 sm:mt-12 ${inPortal ? "max-w-6xl" : "max-w-md mx-auto"}`}
-      >
-        {banner && (
-          <div
-            className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
-              banner.kind === "error"
-                ? "border-red-500/40 bg-red-500/10 text-red-500"
-                : banner.kind === "success"
-                  ? "border-green-500/40 bg-green-500/10 text-success"
-                  : "border-border bg-surface-2 text-text-main"
-            }`}
-            role="alert"
-          >
-            {banner.text}
-          </div>
-        )}
+    <PortalView
+      me={me}
+      banner={banner}
+      revealedKey={revealedKey}
+      onRegenerated={(key) => setRevealedKey(key)}
+      onLogout={() => {
+        setMe(null);
+        setRevealedKey(null);
+        setStatus("guest");
+      }}
+      origin={origin}
+    />
+  );
+}
 
-        {status === "guest" && <GuestView />}
-        {status === "disabled" && (
-          <Card className="text-center py-8">
-            <h1 className="text-xl font-bold text-primary mb-1">Account disabled</h1>
-            <p className="text-sm text-text-muted">
-              This account has been disabled by the administrator.
-            </p>
-            <Button variant="ghost" size="sm" className="mt-4" onClick={logout}>
-              Sign out
-            </Button>
-          </Card>
-        )}
-        {status === "active" && me && (
-          <PortalView
-            me={me}
-            revealedKey={revealedKey}
-            onRegenerated={(key) => setRevealedKey(key)}
-            onLogout={() => {
-              setMe(null);
-              setRevealedKey(null);
-              setStatus("guest");
-            }}
-            origin={origin}
-          />
-        )}
-      </div>
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-bg flex flex-col items-center px-4 py-10 sm:py-16">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
+function Banner({ banner }) {
+  return (
+    <div
+      className={`mb-5 rounded-[10px] border px-4 py-3 text-sm ${
+        banner.kind === "error"
+          ? "border-red-500/40 bg-red-500/10 text-red-500"
+          : banner.kind === "success"
+            ? "border-green-500/40 bg-green-500/10 text-success"
+            : "border-border bg-surface-2 text-text-main"
+      }`}
+      role="alert"
+    >
+      {banner.text}
     </div>
   );
 }
@@ -227,8 +242,12 @@ function GuestView() {
   );
 }
 
-function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
+/* ── Active portal: topbar (brand + balance + account) and nav tabs ── */
+
+function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, origin }) {
+  const [tab, setTab] = useState("overview");
   const [plaintext, setPlaintext] = useState(revealedKey || null);
+  const contentRef = useRef(null);
 
   const onRegenerate = useCallback(async () => {
     if (
@@ -248,45 +267,77 @@ function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
     } catch {}
   }, [onRegenerated]);
 
-  return (
-    <div className="flex flex-col gap-5">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="shrink-0 w-11 h-11 rounded-xl bg-brand-500/10 text-brand-500 flex items-center justify-center">
-            <span className="material-symbols-outlined text-2xl">account_circle</span>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold text-primary truncate">
-              {me.customer?.name || me.customer?.email || "Account"}
-            </h1>
-            <p className="text-xs text-text-muted truncate">{me.customer?.email}</p>
-          </div>
-        </div>
-        <Button variant="ghost" size="sm" icon="logout" onClick={logout}>
-          Sign out
-        </Button>
-      </div>
+  const micros = Number(me.balance?.balanceMicros) || 0;
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <div className="flex flex-col gap-4">
-          <BalanceCard balance={me.balance} />
-          <TopUpCard />
+  const pickTab = (id) => {
+    setTab(id);
+    // Keep the tab bar in view when switching from a tall section.
+    if (contentRef.current) contentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <div className="min-h-screen bg-bg">
+      {/* Topbar: brand, live balance, account */}
+      <header className="sticky top-0 z-30 bg-surface/85 backdrop-blur border-b border-border-subtle">
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="shrink-0 w-7 h-7 rounded-lg bg-brand-500 text-white flex items-center justify-center">
+              <span className="material-symbols-outlined text-[18px]">token</span>
+            </div>
+            <span className="text-sm font-semibold text-text-main">9Router</span>
+            <span className="hidden sm:inline text-xs text-text-muted ml-1">API Portal</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold tabular-nums text-primary" title="Current balance">
+              {fmtMoney(micros)}
+            </span>
+            <Button variant="ghost" size="sm" icon="logout" onClick={onLogout} title="Sign out">
+              <span className="hidden sm:inline">Sign out</span>
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4">
+        {/* Nav tabs */}
+        <nav className="max-w-3xl mx-auto px-4 flex gap-1 overflow-x-auto" aria-label="Portal sections">
+          {PORTAL_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => pickTab(t.id)}
+              aria-current={tab === t.id ? "page" : undefined}
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 -mb-px whitespace-nowrap transition-colors ${
+                tab === t.id
+                  ? "border-brand-500 text-text-main"
+                  : "border-transparent text-text-muted hover:text-text-main"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      <main ref={contentRef} className="max-w-3xl mx-auto px-4 py-6 scroll-mt-24">
+        {banner && <Banner banner={banner} />}
+
+        {tab === "overview" && (
+          <div className="flex flex-col gap-4">
+            <BalanceCard balance={me.balance} />
+            <TopUpCard />
+          </div>
+        )}
+        {tab === "api" && (
           <ApiKeyCard
             mask={me.key?.mask}
             plaintext={plaintext}
             onRegenerate={onRegenerate}
             origin={origin}
           />
-          <UsageCard mask={me.key?.mask} />
-        </div>
-      </div>
-
-      <LedgerCard />
-
-      <PublicModelsCard />
+        )}
+        {tab === "usage" && <UsageCard />}
+        {tab === "ledger" && <LedgerCard />}
+        {tab === "pricing" && <PublicModelsCard />}
+      </main>
     </div>
   );
 }
@@ -342,9 +393,9 @@ function PublicModelsCard() {
 
   return (
     <Card>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-primary">Model Pricing</h3>
-        <span className="text-[11px] text-text-muted">USD per 1M token · click a column to sort</span>
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <h3 className="text-sm font-semibold text-primary">Model pricing</h3>
+        <span className="text-[11px] text-text-muted">USD per 1M token, click a column to sort</span>
       </div>
       {sorted === null ? (
         <div className="text-xs text-text-muted py-4 text-center">Loading…</div>
@@ -395,14 +446,14 @@ function PublicModelsCard() {
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3">
-        &ldquo;Price&rdquo; = The final price after the discount, used for billing. <br /> &ldquo;Cache&ldquo; = input price
-        when the prompt is cached, as a percentage of the input price.
+        &ldquo;Price&rdquo; is the final price after the discount, used for billing. &ldquo;Cache&rdquo; is the input
+        price when the prompt is cached, as a percentage of the input price.
       </p>
     </Card>
   );
 }
 
-// USD/1M → tampilan pendek (max 4 desimal, trailing zero dipangkas).
+// USD/1M → short display (max 4 decimals, trailing zeros trimmed).
 function fmtRate(n) {
   return String(parseFloat((Number(n) || 0).toFixed(4)));
 }
@@ -423,7 +474,7 @@ function TopUpCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [paymentUrl, setPaymentUrl] = useState(null);
+  const [payment, setPayment] = useState(null); // { paymentUrl, amountIdr, creditedMicros }
   const [history, setHistory] = useState(null);
 
   // Preset click clears the free-form field; typing in it clears the preset.
@@ -456,7 +507,6 @@ function TopUpCard() {
     setBusy(true);
     setError("");
     setNotice("");
-    setPaymentUrl(null);
     try {
       const res = await fetch("/api/customer/topup", {
         method: "POST",
@@ -473,11 +523,14 @@ function TopUpCard() {
         setAmount(amountIdr);
         loadHistory();
       } else {
-        setPaymentUrl(data.topup?.paymentUrl || null);
+        setAmount(amountIdr);
+        setPayment({
+          id: data.topup?.id ?? null,
+          paymentUrl: data.topup?.paymentUrl || null,
+          amountIdr,
+          creditedMicros: data.topup?.creditedMicros ?? null,
+        });
         loadHistory();
-        if (!data.topup?.paymentUrl) {
-          setNotice("Top-up created. Awaiting payment confirmation.");
-        }
       }
     } catch (err) {
       setError(String(err?.message || err));
@@ -487,59 +540,54 @@ function TopUpCard() {
   };
 
   return (
-    <Card className="flex flex-col gap-3 px-4 py-4">
-      <div>
-        <span className="text-sm font-medium text-text-muted">Top up</span>
-        <div className="flex flex-wrap gap-2 mt-3">
-          {TOPUP_AMOUNTS_IDR.map((a) => (
-            <button
-              key={a}
-              type="button"
-              onClick={() => pickPreset(a)}
-              className={`px-3 py-1.5 rounded-[10px] text-xs border transition-colors ${
-                custom === "" && amount === a
-                  ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
-                  : "border-border-subtle text-text-muted hover:text-text-main"
-              }`}
-            >
-              Rp {a.toLocaleString("id-ID")}
-            </button>
-          ))}
-        </div>
-        <label className="flex flex-col gap-1 mt-3 text-[11px] text-text-muted">
-          Custom amount (IDR, min 10,000)
-          <input
-            type="number"
-            min={10_000}
-            step={1000}
-            value={custom}
-            placeholder="e.g. 150000"
-            onChange={(e) => setCustom(e.target.value)}
-            className="w-40 px-2 py-1.5 rounded-[10px] border border-border-subtle bg-surface-2 text-xs text-text-main focus:outline-none focus:border-brand-500"
-          />
-        </label>
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-primary">Top up</h3>
+        <span className="text-[11px] text-text-muted">QRIS</span>
       </div>
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button onClick={startTopup} disabled={busy} size="sm">
-          {busy ? "Processing…" : "Create Payment"}
-        </Button>
-        {paymentUrl && (
-          <a
-            href={paymentUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-brand-500 underline font-medium"
+
+      <div className="flex flex-wrap gap-2">
+        {TOPUP_AMOUNTS_IDR.map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => pickPreset(a)}
+            aria-pressed={custom === "" && amount === a}
+            className={`px-3 py-1.5 rounded-[10px] text-xs border transition-colors ${
+              custom === "" && amount === a
+                ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
+                : "border-border-subtle text-text-muted hover:text-text-main"
+            }`}
           >
-            Open payment page
-          </a>
-        )}
+            Rp {a.toLocaleString("id-ID")}
+          </button>
+        ))}
       </div>
+
+      <label className="flex flex-col gap-1 text-[11px] text-text-muted">
+        Custom amount (IDR, min 10,000)
+        <input
+          type="number"
+          min={10_000}
+          step={1000}
+          value={custom}
+          placeholder="e.g. 150000"
+          onChange={(e) => setCustom(e.target.value)}
+          className="w-44 px-3 py-1.5 rounded-[10px] border border-border-subtle bg-surface-2 text-xs text-text-main focus:outline-none focus:border-brand-500"
+        />
+      </label>
+
+      <Button onClick={startTopup} disabled={busy} size="sm" className="self-start">
+        {busy ? "Processing…" : "Create QRIS payment"}
+      </Button>
+
       {error && <p className="text-xs text-red-500">{error}</p>}
       {notice && <p className="text-xs text-text-muted">{notice}</p>}
+
       {Array.isArray(history) && history.length > 0 && (
-        <div className="pt-2 border-t border-border-subtle">
-          <div className="text-[11px] font-medium text-text-muted mb-1.5">Top-up history</div>
-          <ul className="space-y-1 max-h-30 overflow-y-auto pr-1">
+        <div className="pt-3 border-t border-border-subtle">
+          <div className="text-[11px] font-medium text-text-muted mb-1.5">Recent top-ups</div>
+          <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
             {history.map((t) => (
               <li key={t.id} className="flex items-center justify-between text-xs">
                 <span className="text-text-main tabular-nums">
@@ -553,7 +601,140 @@ function TopUpCard() {
           </ul>
         </div>
       )}
+
+      {/* Keyed by topup id so a new payment remounts with fresh QR/poll state. */}
+      <PaymentModal
+        key={payment?.id ?? "none"}
+        payment={payment}
+        onClose={() => setPayment(null)}
+        onPaid={loadHistory}
+      />
     </Card>
+  );
+}
+
+// QRIS payment dialog: shows the QR inline so the customer never leaves the
+// portal. Scans of paymentUrl render as an image; without a URL (manual
+// confirmation flows) we fall back to a copyable payment link.
+function PaymentModal({ payment, onClose, onPaid }) {
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrError, setQrError] = useState(false);
+  const [checkState, setCheckState] = useState("idle"); // idle | checking | paid
+
+  // Reset QR state when the dialog opens for a new payment, via the
+  // render-time key reset pattern (PaymentModal keyed by topup id).
+  useEffect(() => {
+    if (!payment?.paymentUrl) return;
+    let cancelled = false;
+    // Dynamic import keeps qrcode out of the initial bundle.
+    import("qrcode")
+      .then((mod) => mod.default.toDataURL(payment.paymentUrl, { margin: 1, width: 220 }))
+      .then((url) => !cancelled && setQrDataUrl(url))
+      .catch(() => !cancelled && setQrError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [payment]);
+
+  // Poll the topup list while the dialog is open; flip to "paid" the moment
+  // the webhook/reconciliation credits the row. A ref guards the interval
+  // body against a stale "paid" check between renders.
+  const paidRef = useRef(false);
+  useEffect(() => {
+    paidRef.current = checkState === "paid";
+  }, [checkState]);
+  useEffect(() => {
+    if (!payment) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (paidRef.current) return;
+      try {
+        const r = await fetch("/api/customer/topups?limit=10", { headers: { "Cache-Control": "no-store" } });
+        const d = r.ok ? await r.json() : {};
+        const row = payment.id ? (d.items || []).find((t) => t.id === payment.id) : null;
+        if (!cancelled && row?.status === "paid") {
+          setCheckState("paid");
+          onPaid?.();
+        }
+      } catch {}
+    };
+    const iv = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [payment, onPaid]);
+  if (!payment) return null;
+  const paid = checkState === "paid";
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={paid ? "Payment received" : "Scan to pay"}
+      size="sm"
+      showTrafficLights={false}
+    >
+      <div className="flex flex-col items-center gap-4 text-center">
+        {paid ? (
+          <>
+            <div className="w-14 h-14 rounded-full bg-green-500/10 text-success flex items-center justify-center">
+              <span className="material-symbols-outlined text-3xl">check_circle</span>
+            </div>
+            <p className="text-sm text-text-main">
+              Your balance has been topped up.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-text-muted">
+              Pay <span className="font-semibold text-text-main">Rp {(payment.amountIdr || 0).toLocaleString("id-ID")}</span>{" "}
+              with any QRIS-compatible app (GoPay, OVO, DANA, bank apps).
+            </p>
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt="QRIS payment code"
+                width={220}
+                height={220}
+                className="rounded-[10px] border border-border-subtle bg-white p-2"
+              />
+            ) : qrError ? (
+              <div className="text-xs text-text-muted">
+                Could not render the QR code.{" "}
+                {payment.paymentUrl && (
+                  <a href={payment.paymentUrl} target="_blank" rel="noopener noreferrer" className="text-brand-500 underline font-medium">
+                    Open the payment page
+                  </a>
+                )}
+              </div>
+            ) : payment.paymentUrl ? (
+              <div className="w-[220px] h-[220px] rounded-[10px] bg-surface-2 animate-pulse" aria-label="Loading QR code" />
+            ) : (
+              <p className="text-xs text-text-muted">
+                Waiting for the payment link…
+              </p>
+            )}
+            {payment.paymentUrl && qrDataUrl && (
+              <a
+                href={payment.paymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-brand-500 underline font-medium"
+              >
+                Open payment page instead
+              </a>
+            )}
+            <p className="text-[11px] text-text-muted">
+              This dialog checks for payment automatically. Keep it open until the scan is confirmed.
+            </p>
+          </>
+        )}
+        <Button onClick={onClose} variant={paid ? "primary" : "ghost"} size="sm">
+          {paid ? "Done" : "Close"}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -562,7 +743,7 @@ function BalanceCard({ balance }) {
   const reserved = Number(balance?.reservedMicros) || 0;
   const low = micros < 100_000; // < $0.10
   return (
-    <Card className="flex flex-col gap-1.5 px-4 py-4">
+    <Card className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-text-muted">Balance</span>
       <span className={`text-3xl font-bold tabular-nums ${low ? "text-red-500" : "text-primary"}`}>
         {fmtMoney(micros)}
@@ -574,7 +755,7 @@ function BalanceCard({ balance }) {
   );
 }
 
-function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
+function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
   const [show, setShow] = useState(false);
   const [revealed, setRevealed] = useState(null);
   const [revealError, setRevealError] = useState("");
@@ -610,9 +791,9 @@ function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
   const shownKey = plaintext || (show ? revealed : null);
 
   return (
-    <Card className="flex flex-col gap-3 px-4 py-4">
+    <Card className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-text-muted">API key</span>
+        <h3 className="text-sm font-semibold text-primary">API key</h3>
         <Button variant="ghost" size="sm" icon="autorenew" onClick={onRegenerate}>
           Regenerate
         </Button>
@@ -698,9 +879,9 @@ function UsageCard() {
   const totalOut = (items || []).reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);
 
   return (
-    <Card className="flex flex-col gap-3 px-4 py-4">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-text-muted">Usage</span>
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="text-sm font-semibold text-primary">Usage</h3>
         <SegmentedControl
           options={USAGE_PERIODS}
           value={period}
@@ -710,9 +891,9 @@ function UsageCard() {
       </div>
 
       {items === null ? (
-        <div className="h-20 rounded-lg bg-surface-2 animate-pulse" />
+        <div className="h-20 rounded-[10px] bg-surface-2 animate-pulse" />
       ) : items.length === 0 ? (
-        <div className="h-20 rounded-lg border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
+        <div className="h-20 rounded-[10px] border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
           No usage in this period.
         </div>
       ) : (
@@ -731,7 +912,7 @@ function UsageCard() {
               {fmtCompact(totalIn)} in / {fmtCompact(totalOut)} out
             </span>
           </div>
-          <div className="max-h-80 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle/60">
+          <div className="max-h-96 overflow-y-auto rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60 custom-scrollbar">
             {items.map((r, i) => (
               <UsageRow key={i} r={r} />
             ))}
@@ -809,15 +990,16 @@ function LedgerCard() {
   const filtered = (items || []).filter((e) => (tab === "all" ? true : e.type === tab));
 
   return (
-    <Card className="flex flex-col gap-3 px-4 py-4">
+    <Card className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="text-sm font-medium text-text-muted">Ledger</span>
+        <h3 className="text-sm font-semibold text-primary">Ledger</h3>
         <div className="flex gap-1 flex-wrap">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
+              aria-pressed={tab === t.id}
               className={`text-[11px] px-2.5 py-1 rounded-[10px] border transition-colors ${
                 tab === t.id
                   ? "bg-brand-500/10 border-brand-500/40 text-text-main font-medium"
@@ -830,13 +1012,13 @@ function LedgerCard() {
         </div>
       </div>
       {items === null ? (
-        <div className="h-20 rounded-lg bg-surface-2 animate-pulse" />
+        <div className="h-20 rounded-[10px] bg-surface-2 animate-pulse" />
       ) : filtered.length === 0 ? (
-        <div className="h-20 rounded-lg border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
+        <div className="h-20 rounded-[10px] border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
           No transactions here.
         </div>
       ) : (
-        <div className="max-h-80 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle/60">
+        <div className="max-h-96 overflow-y-auto rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60 custom-scrollbar">
           {filtered.map((e, i) => {
             const amt = Number(e.amountMicros) || 0;
             const pos = amt > 0;
@@ -928,8 +1110,8 @@ function CodeBlock({ code, label }) {
   return (
     <div className="relative">
       {label && <p className="text-[11px] text-text-muted mb-1">{label}</p>}
-      <div className="relative bg-bg border border-border-subtle rounded-lg">
-        <pre className="text-[11px] leading-relaxed p-3 pr-9 overflow-x-auto">
+      <div className="relative bg-bg border border-border-subtle rounded-[10px]">
+        <pre className="text-[11px] leading-relaxed p-3 pr-9 overflow-x-auto custom-scrollbar">
           <code>{code}</code>
         </pre>
         <div className="absolute top-1.5 right-1.5">
@@ -939,4 +1121,3 @@ function CodeBlock({ code, label }) {
     </div>
   );
 }
-

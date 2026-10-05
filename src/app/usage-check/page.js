@@ -791,7 +791,9 @@ function UsageRow({ r }) {
           <div className="text-right">
             <div className="text-text-muted">Billed</div>
             <div className="text-text-main tabular-nums">
-              {r.chargedMicros != null ? fmtMoney(r.chargedMicros) : fmtMoney(r.cost)}
+              {r.chargedMicros != null
+                ? fmtMoney(r.chargedMicros)
+                : fmtMoney(Math.round((Number(r.cost) || 0) * 1_000_000))}
             </div>
           </div>
           <div className={`text-right w-12 ${r.status && r.status !== "ok" ? "text-red-500" : ""}`}>

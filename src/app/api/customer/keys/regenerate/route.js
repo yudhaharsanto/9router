@@ -21,7 +21,7 @@ export async function POST(request) {
   if (origin) {
     // Empty getPublicOrigin (unset/misconfigured BASE_URL) → compare against
     // the request's own origin so the check stays fail-closed on host mismatch.
-    const expected = getPublicOrigin(request) || new URL(request.url).origin;
+    const expected = await getPublicOrigin(request) || new URL(request.url).origin;
     if (origin !== expected) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

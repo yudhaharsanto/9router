@@ -35,7 +35,19 @@ function normalizeScopes(value) {
   return (value || DEFAULT_SCOPES).trim() || DEFAULT_SCOPES;
 }
 
-export function getPublicOrigin(request) {
+// Origin priority: admin setting (publicOrigin) > BASE_URL env > trusted
+// request host > localhost fallback. The setting lets a domain deployment
+// work without env vars; it's session-gated admin config, so no header can
+// set it.
+export async function getPublicOrigin(request) {
+  try {
+    const settings = await getSettings();
+    const configured = trimTrailingSlashes(settings?.publicOrigin || "");
+    if (configured) return configured;
+  } catch {
+    // Settings unavailable (e.g. early init) — fall through to env/host.
+  }
+
   const configuredBaseUrl =
     process.env.BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || "";
 

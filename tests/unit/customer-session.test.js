@@ -56,7 +56,7 @@ describe("customerSession", () => {
     process.env.BASE_URL = "https://router.example.com";
     try {
       const req = new Request("http://localhost:20128/x"); // plain http request
-      expect(shouldUseSecureCookie(req)).toBe(true);
+      expect(await shouldUseSecureCookie(req)).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.BASE_URL;
       else process.env.BASE_URL = prev;
@@ -64,8 +64,8 @@ describe("customerSession", () => {
     // And still secure on a direct https request to a trusted host (no BASE_URL).
     delete process.env.BASE_URL;
     const httpsReq = new Request("https://localhost:3000/x");
-    expect(shouldUseSecureCookie(httpsReq)).toBe(true);
+    expect(await shouldUseSecureCookie(httpsReq)).toBe(true);
     const httpReq = new Request("http://localhost:20128/x");
-    expect(shouldUseSecureCookie(httpReq)).toBe(false);
+    expect(await shouldUseSecureCookie(httpReq)).toBe(false);
   });
 });

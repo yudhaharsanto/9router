@@ -16,7 +16,7 @@ function fail(origin, code) {
 }
 
 export async function GET(request) {
-  const origin = getPublicOrigin(request);
+  const origin = await getPublicOrigin(request);
   const url = new URL(request.url);
   if (url.searchParams.get("error")) {
     return fail(origin, url.searchParams.get("error"));
@@ -56,7 +56,7 @@ export async function GET(request) {
     });
 
     const sessionToken = await createCustomerAuthToken({ customerId: customer.id });
-    setCustomerAuthCookie(cookieStore, request, sessionToken);
+    await setCustomerAuthCookie(cookieStore, request, sessionToken);
 
     const target = new URL("/usage-check", origin);
     if (created) {

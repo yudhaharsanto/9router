@@ -28,14 +28,14 @@ const SECRET = new TextEncoder().encode(
   crypto.createHmac("sha256", loadJwtSecret()).update("crx-customer-session-v1").digest("hex")
 );
 
-export function shouldUseSecureCookie(request) {
+export async function shouldUseSecureCookie(request) {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";
   if (forceSecureCookie) return true;
   if (request?.headers?.get?.("x-forwarded-proto") === "https") return true;
   // BASE_URL=https://... or a direct https request — getPublicOrigin already
   // enforces trusted-host rules, so this adds no header-trust risk.
   try {
-    return getPublicOrigin(request).startsWith("https://");
+    return (await getPublicOrigin(request)).startsWith("https://");
   } catch {
     return false;
   }
@@ -70,10 +70,10 @@ export async function getCustomerSession(token) {
   }
 }
 
-export function setCustomerAuthCookie(cookieStore, request, token) {
+export async function setCustomerAuthCookie(cookieStore, request, token) {
   cookieStore.set("crx_session", token, {
     httpOnly: true,
-    secure: shouldUseSecureCookie(request),
+    secure: await shouldUseSecureCookie(request),
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE_SEC,

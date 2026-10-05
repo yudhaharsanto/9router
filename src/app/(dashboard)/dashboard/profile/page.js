@@ -48,7 +48,7 @@ export default function ProfilePage() {
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
   const [oidcExpanded, setOidcExpanded] = useState(false);
   // Customer portal Google OAuth (phase 2) — separate from admin SSO above.
-  const [googleForm, setGoogleForm] = useState({ googleOAuthClientId: "" });
+  const [googleForm, setGoogleForm] = useState({ googleOAuthClientId: "", publicOrigin: "" });
   const [googleClientSecret, setGoogleClientSecret] = useState("");
   const [googleStatus, setGoogleStatus] = useState({ type: "", message: "" });
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -98,7 +98,10 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
-        setGoogleForm({ googleOAuthClientId: data?.googleOAuthClientId || "" });
+        setGoogleForm({
+          googleOAuthClientId: data?.googleOAuthClientId || "",
+          publicOrigin: data?.publicOrigin || "",
+        });
         setOidcForm({
           authMode: data?.authMode || "password",
           oidcIssuerUrl: data?.oidcIssuerUrl || "",
@@ -437,13 +440,17 @@ export default function ProfilePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           googleOAuthClientId: clientId,
+          publicOrigin: googleForm.publicOrigin.trim(),
           ...(secret ? { googleOAuthClientSecret: secret } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setSettings((prev) => ({ ...prev, ...data }));
-        setGoogleForm({ googleOAuthClientId: data.googleOAuthClientId || clientId });
+        setGoogleForm({
+          googleOAuthClientId: data.googleOAuthClientId || clientId,
+          publicOrigin: data.publicOrigin || "",
+        });
         setGoogleClientSecret("");
         setGoogleStatus({ type: "success", message: "Google sign-in settings saved." });
       } else {
@@ -1531,9 +1538,24 @@ export default function ProfilePage() {
                 <p className="text-xs sm:text-sm text-text-muted">This value is write-only after saving.</p>
               </div>
 
+              <div className="flex flex-col gap-2">
+                <label className="font-medium text-sm sm:text-base">Public origin</label>
+                <Input
+                  placeholder="https://portal.example.com (empty = auto-detect / BASE_URL)"
+                  value={googleForm.publicOrigin}
+                  onChange={(e) => setGoogleForm((f) => ({ ...f, publicOrigin: e.target.value }))}
+                  disabled={loading || googleLoading}
+                />
+                <p className="text-xs sm:text-sm text-text-muted">
+                  Set this when serving on a domain so Google sign-in builds the right redirect URI without env vars. No trailing slash.
+                </p>
+              </div>
+
               <div className="rounded-lg border border-border bg-bg p-3 text-xs sm:text-sm text-text-muted">
                 <p className="font-medium text-text-main mb-1">Authorized redirect URI (paste in Google Cloud Console)</p>
-                <code className="block break-all font-mono">{origin ? `${origin}/api/customer/auth/google/callback` : "/api/customer/auth/google/callback"}</code>
+                <code className="block break-all font-mono">
+                  {(googleForm.publicOrigin.trim() || origin || "").replace(/\/+$/, "") + "/api/customer/auth/google/callback"}
+                </code>
               </div>
 
               <Button

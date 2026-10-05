@@ -18,7 +18,7 @@ export async function POST(request) {
   // POSTs; non-browser clients send no Origin.
   const origin = request.headers.get("origin");
   if (origin) {
-    const expected = getPublicOrigin(request) || new URL(request.url).origin;
+    const expected = await getPublicOrigin(request) || new URL(request.url).origin;
     if (origin !== expected) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

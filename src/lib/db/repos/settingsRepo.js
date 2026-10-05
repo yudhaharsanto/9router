@@ -36,6 +36,10 @@ const DEFAULT_SETTINGS = {
   oidcLoginLabel: "Sign in with OIDC",
   googleOAuthClientId: "",
   googleOAuthClientSecret: "",
+  // Public origin for the customer portal (e.g. https://portal.example.com).
+  // Drives Google OAuth redirect_uri and secure-cookie decisions without env.
+  // Empty = fall back to BASE_URL env / trusted request host / localhost.
+  publicOrigin: "",
   // Customer billing (phase 4): Tako top-up + FX rate. takoMerchantKey is the
   // Tako API key (write-only: never returned by GET /api/settings; the portal
   // shows only a "configured" flag).

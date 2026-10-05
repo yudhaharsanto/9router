@@ -11,13 +11,13 @@ import { getPublicOrigin } from "@/lib/auth/oidc";
 export const dynamic = "force-dynamic";
 
 // Redirect_uri must exactly match what's registered in the Google console.
-function redirectUri(request) {
-  return `${getPublicOrigin(request)}/api/customer/auth/google/callback`;
+async function redirectUri(request) {
+  return `${await getPublicOrigin(request)}/api/customer/auth/google/callback`;
 }
 
 export async function GET(request) {
   const config = await getGoogleOAuthConfig();
-  const origin = getPublicOrigin(request);
+  const origin = await getPublicOrigin(request);
   if (!config) {
     return NextResponse.redirect(new URL("/usage-check?error=google_not_configured", origin));
   }
@@ -30,7 +30,7 @@ export async function GET(request) {
   // secure matches the admin oidc start route's behavior; getPublicOrigin already
   // restricts untrusted hosts.
   const { shouldUseSecureCookie } = await import("@/lib/auth/customerSession");
-  if (shouldUseSecureCookie(request)) {
+  if (await shouldUseSecureCookie(request)) {
     baseOptions.secure = true;
   }
   cookieStore.set("crx_oauth_state", state, baseOptions);
@@ -39,7 +39,7 @@ export async function GET(request) {
   return NextResponse.redirect(
     buildGoogleAuthUrl({
       clientId: config.clientId,
-      redirectUri: redirectUri(request),
+      redirectUri: await redirectUri(request),
       state,
       codeChallenge: challenge,
     })

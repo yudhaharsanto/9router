@@ -50,7 +50,7 @@ const LEDGER_TYPE_LABEL = {
   adjustment: "Adjustment",
 };
 
-// Reverse index: provider alias/uiAlias → provider id (untuk ikon /providers/{id}.png).
+// Reverse index: provider alias/uiAlias → provider id (for /providers/{id}.png icons).
 const ALIAS_TO_ID = (() => {
   const map = {};
   for (const [id, p] of Object.entries(AI_PROVIDERS || {})) {
@@ -120,7 +120,7 @@ export default function UsageCheckPage() {
         setMe(body);
         if (body.revealedKey) setRevealedKey(body.revealedKey);
         if (welcome && body.revealedKey) {
-          setBanner({ kind: "success", text: "Account created! Copy your API key now — it is shown only once." });
+          setBanner({ kind: "success", text: "Account created! Copy your API key now. It is shown only once." });
         }
       } catch {
         setStatus("guest");
@@ -271,22 +271,22 @@ function PortalView({ me, revealedKey, onRegenerated, onLogout, origin }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
         <div className="flex flex-col gap-4">
           <BalanceCard balance={me.balance} />
+          <TopUpCard />
+        </div>
+        <div className="flex flex-col gap-4">
           <ApiKeyCard
             mask={me.key?.mask}
             plaintext={plaintext}
             onRegenerate={onRegenerate}
             origin={origin}
           />
-        </div>
-        <div className="flex flex-col gap-4">
           <UsageCard mask={me.key?.mask} />
-          <TopUpCard />
         </div>
       </div>
 
-      <PublicModelsCard />
-
       <LedgerCard />
+
+      <PublicModelsCard />
     </div>
   );
 }
@@ -469,7 +469,7 @@ function TopUpCard() {
       } else if (data.manual) {
         // No online payment configured server-side; the request is recorded
         // pending and the customer contacts the admin to settle it.
-        setNotice(data.message || "Top-up recorded — contact the admin.");
+        setNotice(data.message || "Top-up recorded. Contact the admin to settle it.");
         setAmount(amountIdr);
         loadHistory();
       } else {
@@ -489,38 +489,35 @@ function TopUpCard() {
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
       <div>
-        <h3 className="text-sm font-semibold text-primary mb-2">Top Up Balance</h3>
-        <div>
-          <div className="flex flex-wrap gap-2">
-            {TOPUP_AMOUNTS_IDR.map((a) => (
-              <button
-                key={a}
-                type="button"
-                onClick={() => pickPreset(a)}
-                className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
-                  custom === "" && amount === a
-                    ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
-                    : "border-border-subtle text-text-muted hover:text-text-main"
-                }`}
-              >
-                Rp {a.toLocaleString("id-ID")}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-2 mt-2 text-[11px] text-text-muted">
-            Or enter a custom amount:
-            <input
-              type="number"
-              min={10_000}
-              step={1000}
-              value={custom}
-              placeholder="mis. 150000"
-              onChange={(e) => setCustom(e.target.value)}
-              className="w-32 px-2 py-1 rounded-lg border border-border-subtle bg-surface-2 text-xs text-text-main focus:outline-none focus:border-brand-500"
-            />
-            IDR
-          </label>
+        <span className="text-sm font-medium text-text-muted">Top up</span>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {TOPUP_AMOUNTS_IDR.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => pickPreset(a)}
+              className={`px-3 py-1.5 rounded-[10px] text-xs border transition-colors ${
+                custom === "" && amount === a
+                  ? "border-brand-500 bg-brand-500/10 text-primary font-semibold"
+                  : "border-border-subtle text-text-muted hover:text-text-main"
+              }`}
+            >
+              Rp {a.toLocaleString("id-ID")}
+            </button>
+          ))}
         </div>
+        <label className="flex flex-col gap-1 mt-3 text-[11px] text-text-muted">
+          Custom amount (IDR, min 10,000)
+          <input
+            type="number"
+            min={10_000}
+            step={1000}
+            value={custom}
+            placeholder="e.g. 150000"
+            onChange={(e) => setCustom(e.target.value)}
+            className="w-40 px-2 py-1.5 rounded-[10px] border border-border-subtle bg-surface-2 text-xs text-text-main focus:outline-none focus:border-brand-500"
+          />
+        </label>
       </div>
       <div className="flex items-center gap-3 flex-wrap">
         <Button onClick={startTopup} disabled={busy} size="sm">
@@ -533,7 +530,7 @@ function TopUpCard() {
             rel="noopener noreferrer"
             className="text-xs text-brand-500 underline font-medium"
           >
-            Buka halaman pembayaran →
+            Open payment page
           </a>
         )}
       </div>
@@ -566,15 +563,12 @@ function BalanceCard({ balance }) {
   const low = micros < 100_000; // < $0.10
   return (
     <Card className="flex flex-col gap-1.5 px-4 py-4">
-      <span className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">
-        Balance
-      </span>
+      <span className="text-sm font-medium text-text-muted">Balance</span>
       <span className={`text-3xl font-bold tabular-nums ${low ? "text-red-500" : "text-primary"}`}>
         {fmtMoney(micros)}
       </span>
       <span className="text-[11px] text-text-muted">
-        {fmt(micros)} µ$ · {reserved > 0 ? `${fmtMoney(reserved)} held for in-flight requests · ` : ""}
-        deducted per request
+        {reserved > 0 ? `${fmtMoney(reserved)} held for in-flight requests. ` : ""}Deducted per request.
       </span>
     </Card>
   );
@@ -618,9 +612,7 @@ function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
       <div className="flex items-center justify-between">
-        <span className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">
-          API key
-        </span>
+        <span className="text-sm font-medium text-text-muted">API key</span>
         <Button variant="ghost" size="sm" icon="autorenew" onClick={onRegenerate}>
           Regenerate
         </Button>
@@ -651,11 +643,11 @@ function ApiKeyCard({ mask, plaintext, onRegenerated, onRegenerate, origin }) {
       {plaintext ? (
         <p className="text-[11px] text-warning flex items-start gap-1">
           <span className="material-symbols-outlined text-[14px] mt-px">warning</span>
-          Shown only this once — store it now. Regenerating revokes the current key immediately.
+          Shown only this once. Store it now. Regenerating revokes the current key immediately.
         </p>
       ) : (
         <p className="text-[11px] text-text-muted">
-          The key stays available here — show or copy it anytime. Regenerate issues a
+          The key stays available here. Show or copy it anytime. Regenerate issues a
           new key (the current one stops working immediately).
         </p>
       )}
@@ -708,9 +700,7 @@ function UsageCard() {
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">
-          Usage
-        </span>
+        <span className="text-sm font-medium text-text-muted">Usage</span>
         <SegmentedControl
           options={USAGE_PERIODS}
           value={period}
@@ -727,28 +717,19 @@ function UsageCard() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
-              <div className="text-text-muted">Input</div>
-              <div className="text-text-main tabular-nums font-semibold">{fmtCompact(totalIn)}</div>
-            </div>
-            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
-              <div className="text-text-muted">Output</div>
-              <div className="text-text-main tabular-nums font-semibold">{fmtCompact(totalOut)}</div>
-            </div>
-            <div className="rounded-lg bg-surface-2 px-2.5 py-1.5">
-              <div className="text-text-muted">You paid</div>
-              <div className="text-text-main tabular-nums font-semibold">{fmtMoney(totals.chargedMicros || 0)}</div>
-            </div>
-            <div className="rounded-lg bg-brand-500/10 px-2.5 py-1.5">
-              <div className="text-text-muted">You saved</div>
-              <div className="text-primary tabular-nums font-semibold">
-                {fmtMoney(totals.savedMicros || 0)}
-                <span className="block text-[10px] text-text-muted font-normal">
-                  official {fmtMoney(totals.officialMicros || 0)}
-                </span>
-              </div>
-            </div>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-2xl font-bold tabular-nums text-primary">
+              {fmtMoney(totals.chargedMicros || 0)}
+            </span>
+            <span className="text-xs text-text-muted">
+              billed
+              {totals.savedMicros > 0 && (
+                <>, saved {fmtMoney(totals.savedMicros)} vs official {fmtMoney(totals.officialMicros || 0)}</>
+              )}
+            </span>
+            <span className="ml-auto text-xs text-text-muted tabular-nums">
+              {fmtCompact(totalIn)} in / {fmtCompact(totalOut)} out
+            </span>
           </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle/60">
             {items.map((r, i) => (
@@ -756,7 +737,7 @@ function UsageCard() {
             ))}
           </div>
           <p className="text-[11px] text-text-muted">
-            {items.length} request(s) · &ldquo;official&rdquo; rows below are catalog prices; you are billed at your discounted rate.
+            {items.length} request{items.length === 1 ? "" : "s"} in this period. Older rows show the estimated catalog price.
           </p>
         </>
       )}
@@ -829,24 +810,24 @@ function LedgerCard() {
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4">
-      <span className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">
-        Ledger
-      </span>
-      <div className="flex gap-1 flex-wrap">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-              tab === t.id
-                ? "bg-brand-500/10 border-brand-500/40 text-text-main font-medium"
-                : "border-border-subtle text-text-muted hover:text-text-main"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <span className="text-sm font-medium text-text-muted">Ledger</span>
+        <div className="flex gap-1 flex-wrap">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`text-[11px] px-2.5 py-1 rounded-[10px] border transition-colors ${
+                tab === t.id
+                  ? "bg-brand-500/10 border-brand-500/40 text-text-main font-medium"
+                  : "border-border-subtle text-text-muted hover:text-text-main"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
       {items === null ? (
         <div className="h-20 rounded-lg bg-surface-2 animate-pulse" />

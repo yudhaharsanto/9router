@@ -340,7 +340,7 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefres
         {tab === "usage" && (
           <div className="flex flex-col gap-4">
             <UsageCard />
-            <LedgerCard />
+            <LedgerCard refresh={onRefresh} />
           </div>
         )}
         {tab === "topup" && (
@@ -973,16 +973,20 @@ function UsageRow({ r }) {
   );
 }
 
-function LedgerCard() {
+function LedgerCard({ refresh }) {
   const [items, setItems] = useState(null);
   const [tab, setTab] = useState("all");
 
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/customer/ledger?limit=50", { headers: { "Cache-Control": "no-store" } })
       .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => setItems(d.items || []))
-      .catch(() => setItems([]));
-  }, []);
+      .then((d) => !cancelled && setItems(d.items || []))
+      .catch(() => !cancelled && setItems([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
 
   // Tabs collapse the noise: customers read top-ups and usage; reserve
   // hold/release pairs are internal plumbing of a single request.

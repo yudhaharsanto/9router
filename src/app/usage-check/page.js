@@ -323,7 +323,7 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefres
         {banner && <Banner banner={banner} />}
 
         {tab === "api" && (
-          <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
             <ApiKeyCard
               mask={me.key?.mask}
               plaintext={plaintext}
@@ -380,14 +380,6 @@ function PublicModelsCard() {
     };
   }, []);
 
-  const toggleSort = (key) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  };
-
   const sorted = (() => {
     if (!items) return null;
     const get = PRICE_SORTS[sortKey] || PRICE_SORTS.name;
@@ -403,8 +395,6 @@ function PublicModelsCard() {
     return arr;
   })();
 
-  const arrow = (key) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
-
   return (
     <Card>
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
@@ -417,6 +407,25 @@ function PublicModelsCard() {
             onChange={(v) => setInIdr(v === "IDR")}
           />
         </div>
+        <select
+          aria-label="Sort models"
+          value={`${sortKey}:${sortDir}`}
+          onChange={(e) => {
+            const [k, d] = e.target.value.split(":");
+            setSortKey(k);
+            setSortDir(d);
+          }}
+          className="text-[11px] bg-surface-2 border border-border-subtle rounded-md px-2 py-1 text-text-main"
+        >
+          <option value="name:asc">Name A–Z</option>
+          <option value="name:desc">Name Z–A</option>
+          <option value="price:asc">Price low–high</option>
+          <option value="price:desc">Price high–low</option>
+          <option value="official:asc">Official low–high</option>
+          <option value="official:desc">Official high–low</option>
+          <option value="cache:asc">Cache % low–high</option>
+          <option value="cache:desc">Cache % high–low</option>
+        </select>
       </div>
       {sorted === null ? (
         <div className="text-xs text-text-muted py-4 text-center">Loading…</div>
@@ -425,52 +434,38 @@ function PublicModelsCard() {
           No published models yet.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-text-muted border-b border-border-subtle">
-                {[
-                  ["name", "Model", ""],
-                  ["official", "Official", "pr-3 text-right"],
-                  ["price", "Price", "pr-3 text-right"],
-                  ["cache", "Cache", "text-right"],
-                ].map(([key, label, extra]) => (
-                  <th key={key} className={`py-2 font-medium cursor-pointer select-none hover:text-text-main ${extra || ""}`} onClick={() => toggleSort(key)}>
-                    {label}
-                    {arrow(key)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-subtle/50">
-              {sorted.map((m) => (
-                <tr key={m.name} className="hover:bg-surface-2/50 transition-colors">
-                  <td className="py-2 pr-3">
-                    <CopyBtn value={m.name} title="Copy model name" />
-                    <code className="ml-1.5 font-mono text-text-main">{m.name}</code>
-                    {m.discountRate != null && (
-                      <span className="ml-2 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                        −{Math.round(m.discountRate * 100)}%
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-text-muted tabular-nums">
-                    {m.official
-                      ? `$${fmtRate(m.official.input)} / $${fmtRate(m.official.output)}`
-                      : "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-right font-semibold text-primary tabular-nums">
-                    {inIdr && idrPerUsd
-                      ? `Rp ${fmtIdr(m.sell.input * idrPerUsd)} / Rp ${fmtIdr(m.sell.output * idrPerUsd)}`
-                      : `$${fmtRate(m.sell.input)} / $${fmtRate(m.sell.output)}`}
-                  </td>
-                  <td className="py-2 text-right tabular-nums text-text-muted">
-                    {m.sell.cachedPct != null ? `${m.sell.cachedPct}%` : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {sorted.map((m) => (
+            <div
+              key={m.name}
+              className="rounded-[10px] border border-border-subtle bg-surface-2/40 px-3 py-2.5 flex flex-col gap-1.5 hover:bg-surface-2/70 transition-colors"
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <CopyBtn value={m.name} title="Copy model name" />
+                <code className="font-mono text-xs text-text-main truncate">{m.name}</code>
+                {m.discountRate != null && (
+                  <span className="ml-auto shrink-0 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                    −{Math.round(m.discountRate * 100)}%
+                  </span>
+                )}
+              </div>
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="font-semibold text-primary tabular-nums">
+                  {inIdr && idrPerUsd
+                    ? `Rp ${fmtIdr(m.sell.input * idrPerUsd)} / Rp ${fmtIdr(m.sell.output * idrPerUsd)}`
+                    : `$${fmtRate(m.sell.input)} / $${fmtRate(m.sell.output)}`}
+                </span>
+                <span className="text-[10px] text-text-muted tabular-nums">
+                  {m.sell.cachedPct != null ? `cache ${m.sell.cachedPct}%` : "—"}
+                </span>
+              </div>
+              {m.official && (
+                <div className="text-[10px] text-text-muted tabular-nums">
+                  official ${fmtRate(m.official.input)} / ${fmtRate(m.official.output)}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3">
@@ -731,12 +726,19 @@ function TopUpCard({ refreshBalance }) {
   );
 }
 
-function StatTile({ label, value, hint }) {
+const STAT_TONES = {
+  brand: "bg-brand-500/8 text-brand-600",
+  info: "bg-info/10 text-info",
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/10 text-warning",
+};
+
+function StatTile({ label, value, hint, tone = "brand" }) {
   return (
-    <div className="rounded-[10px] border border-border-subtle bg-surface-2/40 px-3 py-2">
-      <div className="text-[11px] text-text-muted">{label}</div>
+    <div className={`rounded-[10px] px-3 py-2 ${STAT_TONES[tone]}`}>
+      <div className="text-[11px] font-medium opacity-80">{label}</div>
       <div className="text-sm font-semibold tabular-nums">{value}</div>
-      {hint && <div className="text-[10px] text-text-muted">{hint}</div>}
+      {hint && <div className="text-[10px] opacity-70">{hint}</div>}
     </div>
   );
 }
@@ -903,10 +905,10 @@ function UsageCard() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <StatTile label="Requests" value={String(totals.totalRequests ?? items.length)} />
-            <StatTile label="Input" value={fmtCompact(totals.totalPromptTokens || 0)} hint="tokens" />
-            <StatTile label="Output" value={fmtCompact(totals.totalCompletionTokens || 0)} hint="tokens" />
-            <StatTile label="Cached" value={fmtCompact(totals.totalCachedTokens || 0)} hint={totals.totalCacheCreationTokens > 0 ? `+${fmtCompact(totals.totalCacheCreationTokens)} write` : "tokens"} />
+            <StatTile label="Requests" value={String(totals.totalRequests ?? items.length)} tone="brand" />
+            <StatTile label="Input" value={fmtCompact(totals.totalPromptTokens || 0)} hint="tokens" tone="info" />
+            <StatTile label="Output" value={fmtCompact(totals.totalCompletionTokens || 0)} hint="tokens" tone="success" />
+            <StatTile label="Cached" value={fmtCompact(totals.totalCachedTokens || 0)} hint={totals.totalCacheCreationTokens > 0 ? `+${fmtCompact(totals.totalCacheCreationTokens)} write` : "tokens"} tone="warning" />
           </div>
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-2xl font-bold tabular-nums text-primary">

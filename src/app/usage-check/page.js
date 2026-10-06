@@ -319,18 +319,22 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefres
         </nav>
       </header>
 
-      <main ref={contentRef} className="max-w-3xl mx-auto px-4 py-6 scroll-mt-24">
+      <main ref={contentRef} className={`${tab === "api" ? "max-w-6xl" : "max-w-3xl"} mx-auto px-4 py-6 scroll-mt-24`}>
         {banner && <Banner banner={banner} />}
 
         {tab === "api" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-            <ApiKeyCard
-              mask={me.key?.mask}
-              plaintext={plaintext}
-              onRegenerate={onRegenerate}
-              origin={origin}
-            />
-            <PublicModelsCard />
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+            <div className="lg:col-span-2">
+              <ApiKeyCard
+                mask={me.key?.mask}
+                plaintext={plaintext}
+                onRegenerate={onRegenerate}
+                origin={origin}
+              />
+            </div>
+            <div className="lg:col-span-3">
+              <PublicModelsCard />
+            </div>
           </div>
         )}
         {tab === "usage" && (

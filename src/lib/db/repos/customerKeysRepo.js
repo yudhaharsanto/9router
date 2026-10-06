@@ -12,6 +12,9 @@ function hashKey(plaintext) {
   return crypto.createHmac("sha256", API_KEY_SECRET).update(plaintext).digest("hex");
 }
 
+// Shared with usageRepo (row attribution) — same HMAC as key storage.
+export const hashApiKey = hashKey;
+
 function rowToKey(row) {
   if (!row) return null;
   return {

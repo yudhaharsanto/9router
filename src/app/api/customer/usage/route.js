@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/auth/customerSession.js";
 import { getAdapter } from "@/lib/db/driver.js";
@@ -8,10 +7,9 @@ import { listPublicModels } from "@/lib/db/repos/publicModelsRepo.js";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/customer/usage?period=today|7d|30d|all
-// Session-gated usage history scoped to the caller's active customer key:
-// usageHistory rows store the presented plaintext apiKey; we match it against
-// this customer's keyHash (same HMAC scheme as customerKeysRepo).
+// GET /api/customer/usage?period=today|7d|30d|all&billing=all|balance|package
+// Session-gated usage history scoped to the caller's active customer key via
+// usageHistory.keyHash (written at save time; same HMAC as customerKeysRepo).
 const PERIODS = {
   today: () => {
     const d = new Date();
@@ -22,11 +20,6 @@ const PERIODS = {
   "30d": () => new Date(Date.now() - 30 * 864e5),
   all: () => null,
 };
-
-function hashKey(plaintext) {
-  const secret = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
-  return crypto.createHmac("sha256", secret).update(plaintext).digest("hex");
-}
 
 export async function GET(request) {
   const session = await requireCustomerSession(request);
@@ -44,18 +37,15 @@ export async function GET(request) {
   const billingParam = url.searchParams.get("billing");
   const billing = billingParam === "balance" || billingParam === "package" ? billingParam : "all";
 
-  // usageHistory stores the presented plaintext apiKey per request. Pull the
-  // recent window raw, hash-match in memory against this customer's keyHash,
-  // and drop the plaintext column before mapping — it never reaches the
-  // response. ponytail: scan capped at 1000 latest rows per query; if volume
-  // makes that wrong, add a keyHash column + index to usageHistory (phase 6)
-  // and move the filter into SQL.
+  // usageHistory carries keyHash (written at save time, backfilled by
+  // migration 004) — the per-customer filter is an indexed lookup in SQL, no
+  // plaintext key or row cap involved.
   const db = await getAdapter();
   const rows = db.all(
-    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey, tokens, meta
-     FROM usageHistory WHERE timestamp >= COALESCE(?, '1970-01-01')
+    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, tokens, meta
+     FROM usageHistory WHERE keyHash = ? AND timestamp >= COALESCE(?, '1970-01-01')
      ORDER BY id DESC LIMIT 1000`,
-    [startDate ? startDate.toISOString() : null]
+    [active.keyHash, startDate ? startDate.toISOString() : null]
   );
   const keyHash = active.keyHash;
   // The actual amount billed per request lives in the customer's ledger
@@ -99,11 +89,9 @@ export async function GET(request) {
     }
   }
   const items = rows
-    // Rows written without a presented key (admin/panel traffic) have NULL
-    // apiKey and can never match a customer key — skip instead of crashing.
     // Package-billed rows carry meta.publicModel (the package's model name);
     // they pass the publish filter and display under that name directly.
-    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash && (!publishedAnything || modelMap.get(r.model) || parseMeta(r.meta).publicModel))
+    .filter((r) => !publishedAnything || modelMap.get(r.model) || parseMeta(r.meta).publicModel)
     .filter((r) => {
       if (billing === "balance") return !!parseMeta(r.meta).holdRefId;
       if (billing === "package") return !!parseMeta(r.meta).publicModel && !parseMeta(r.meta).holdRefId;

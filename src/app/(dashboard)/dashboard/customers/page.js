@@ -444,47 +444,24 @@ export default function CustomersPage() {
                   <td className="px-6 py-3">{cellValue(c, "keyMask")}</td>
                   <td className="px-6 py-3">{cellValue(c, "createdAt")}</td>
                   <td className="px-6 py-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openUsage(c)}
-                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40"
-                      >
-                        Usage
-                      </button>
-                      <button
-                        disabled={busyId === c.id}
-                        onClick={() => loginAsCustomer(c)}
-                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40 disabled:opacity-50"
-                      >
-                        Login as
-                      </button>
-                      <button
-                        onClick={() => {
-                          setBalanceMsg(null);
-                          setBalanceModal({ id: c.id, name: c.name || c.email || c.id, amountUsd: "", reason: "" });
-                        }}
-                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40"
-                      >
-                        Balance
-                      </button>
-                      {c.status === "active" ? (
-                      <button
-                        disabled={busyId === c.id}
-                        onClick={() => setStatus(c.id, "disabled")}
-                        className="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-600 hover:bg-red-500/10 disabled:opacity-50"
-                      >
-                        Disable
-                      </button>
-                    ) : (
-                      <button
-                        disabled={busyId === c.id}
-                        onClick={() => setStatus(c.id, "active")}
-                        className="rounded-md border border-green-500/40 px-2 py-1 text-xs text-green-600 hover:bg-green-500/10 disabled:opacity-50"
-                      >
-                        Enable
-                      </button>
-                      )}
-                    </div>
+                    <ActionsMenu
+                      items={[
+                        { label: "Usage", onClick: () => openUsage(c) },
+                        { label: "Login as", onClick: () => loginAsCustomer(c) },
+                        {
+                          label: "Balance",
+                          onClick: () => {
+                            setBalanceMsg(null);
+                            setBalanceModal({ id: c.id, name: c.name || c.email || c.id, amountUsd: "", reason: "" });
+                          },
+                        },
+                        {
+                          label: c.status === "active" ? "Disable" : "Enable",
+                          danger: c.status === "active",
+                          onClick: () => setStatus(c.id, c.status === "active" ? "disabled" : "active"),
+                        },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))}

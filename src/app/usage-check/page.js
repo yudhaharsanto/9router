@@ -6,7 +6,7 @@
 // The old password-based lookup (POST /api/public/key-usage) is retired.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, Button, SegmentedControl } from "@/shared/components";
-import ProviderIcon from "@/shared/components/ProviderIcon";
+// import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 function fmt(n) {
@@ -925,13 +925,7 @@ function UsageRow({ r }) {
   return (
     <div className="px-3 py-2.5 hover:bg-surface-2/50 transition-colors">
       <div className="flex items-center gap-3">
-        <ProviderIcon
-          src={providerId ? `/providers/${providerId}.png` : undefined}
-          alt={r.model || ""}
-          size={22}
-          className="rounded-md shrink-0 bg-surface-2"
-          fallbackText={(r.model || "?").slice(0, 2).toUpperCase()}
-        />
+       
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium truncate">{r.model}</div>
           <div className="text-[11px] text-text-muted truncate">{time}</div>

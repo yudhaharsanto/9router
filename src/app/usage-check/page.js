@@ -889,7 +889,7 @@ function UsageCard() {
 
 
   return (
-    <Card className="flex flex-col gap-3">
+    <Card className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-sm font-semibold text-primary">Usage</h3>
         <SegmentedControl
@@ -901,31 +901,32 @@ function UsageCard() {
       </div>
 
       {items === null ? (
-        <div className="h-20 rounded-[10px] bg-surface-2 animate-pulse" />
+        <div className="h-28 rounded-[10px] bg-surface-2 animate-pulse" />
       ) : items.length === 0 ? (
-        <div className="h-20 rounded-[10px] border border-dashed border-border-subtle flex items-center justify-center text-[11px] text-text-muted">
+        <div className="h-24 rounded-[10px] border border-dashed border-border-subtle flex flex-col items-center justify-center gap-1 text-[11px] text-text-muted">
+          <span className="material-symbols-outlined text-[20px] text-text-subtle">monitoring</span>
           No usage in this period.
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="flex items-baseline gap-2.5 flex-wrap">
+            <span className="text-3xl font-bold tabular-nums text-text-main tracking-tight">
+              {fmtMoney(totals.chargedMicros || 0)}
+            </span>
+            <span className="text-xs text-text-muted">billed this period</span>
+            {totals.savedMicros > 0 && (
+              <span className="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success tabular-nums">
+                saved {fmtMoney(totals.savedMicros)}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <StatTile label="Requests" value={String(totals.totalRequests ?? items.length)} tone="brand" />
             <StatTile label="Input" value={fmtCompact(totals.totalPromptTokens || 0)} hint="tokens" tone="info" />
             <StatTile label="Output" value={fmtCompact(totals.totalCompletionTokens || 0)} hint="tokens" tone="success" />
             <StatTile label="Cached" value={fmtCompact(totals.totalCachedTokens || 0)} hint={totals.totalCacheCreationTokens > 0 ? `+${fmtCompact(totals.totalCacheCreationTokens)} write` : "tokens"} tone="warning" />
           </div>
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-2xl font-bold tabular-nums text-primary">
-              {fmtMoney(totals.chargedMicros || 0)}
-            </span>
-            <span className="text-xs text-text-muted">
-              billed
-              {totals.savedMicros > 0 && (
-                <>, saved {fmtMoney(totals.savedMicros)} vs official {fmtMoney(totals.officialMicros || 0)}</>
-              )}
-            </span>
-          </div>
-          <div className="max-h-96 overflow-y-auto rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60 custom-scrollbar">
+          <div className="max-h-[26rem] overflow-y-auto rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60 custom-scrollbar">
             {items.map((r, i) => (
               <UsageRow key={i} r={r} />
             ))}
@@ -940,35 +941,32 @@ function UsageCard() {
 }
 
 function UsageRow({ r }) {
-  const providerId = providerIdFromModel(r.model) || ALIAS_TO_ID[r.provider] || r.provider;
   const time = r.timestamp ? new Date(r.timestamp).toLocaleString() : "";
+  const hasCache = Number(r.cachedTokens) > 0 || Number(r.cacheCreationTokens) > 0;
+  const failed = r.status && r.status !== "ok";
   return (
     <div className="px-3 py-2.5 hover:bg-surface-2/50 transition-colors">
       <div className="flex items-center gap-3">
-       
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium truncate">{r.model}</div>
           <div className="text-[11px] text-text-muted truncate">{time}</div>
         </div>
-        <div className="flex items-center gap-3 text-[11px] shrink-0">
-          <div className="text-right">
-            <div className="text-text-muted">In / Out</div>
-            <div className="text-text-main tabular-nums">
-              {fmtCompact(r.promptTokens)} / {fmtCompact(r.completionTokens)}
-            </div>
+        <div className="hidden sm:flex items-center gap-1.5 text-[11px] tabular-nums shrink-0">
+          <span className="text-info">{fmtCompact(r.promptTokens)}</span>
+          <span className="text-text-subtle">in</span>
+          <span className="text-success">{fmtCompact(r.completionTokens)}</span>
+          <span className="text-text-subtle">out</span>
+          {hasCache && (
+            <span className="text-warning">{fmtCompact(Number(r.cachedTokens) + Number(r.cacheCreationTokens))} cached</span>
+          )}
+        </div>
+        <div className="text-right shrink-0 w-20">
+          <div className="text-xs font-semibold tabular-nums">
+            {r.chargedMicros != null
+              ? fmtMoney(r.chargedMicros)
+              : fmtMoney(Math.round((Number(r.cost) || 0) * 1_000_000))}
           </div>
-          <div className="text-right">
-            <div className="text-text-muted">Billed</div>
-            <div className="text-text-main tabular-nums">
-              {r.chargedMicros != null
-                ? fmtMoney(r.chargedMicros)
-                : fmtMoney(Math.round((Number(r.cost) || 0) * 1_000_000))}
-            </div>
-          </div>
-          <div className={`text-right w-12 ${r.status && r.status !== "ok" ? "text-red-500" : ""}`}>
-            <div className="text-text-muted">Status</div>
-            <div className="text-text-main">{r.status || "—"}</div>
-          </div>
+          <div className={`text-[10px] ${failed ? "text-danger" : "text-text-subtle"}`}>{failed ? r.status : "ok"}</div>
         </div>
       </div>
     </div>

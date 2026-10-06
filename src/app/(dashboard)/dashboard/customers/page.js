@@ -150,6 +150,40 @@ export default function CustomersPage() {
   const [balanceModal, setBalanceModal] = useState(null); // { id, name, amountUsd, reason }
   const [balanceBusy, setBalanceBusy] = useState(false);
   const [balanceMsg, setBalanceMsg] = useState(null);
+  // Usage history modal (admin view of one customer's requests + charges)
+  const [usageModal, setUsageModal] = useState(null); // { id, name }
+  const [usageData, setUsageData] = useState(null);
+  const [usageBusy, setUsageBusy] = useState(false);
+
+  const openUsage = async (c) => {
+    setUsageModal({ id: c.id, name: c.name || c.email || c.id });
+    setUsageData(null);
+    setUsageBusy(true);
+    try {
+      const res = await fetch(`/api/admin/customers/${c.id}/usage`, { cache: "no-store" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setUsageData(body);
+    } catch (e) {
+      setUsageData({ error: String(e?.message || e) });
+    } finally {
+      setUsageBusy(false);
+    }
+  };
+
+  const loginAsCustomer = async (c) => {
+    setBusyId(c.id);
+    try {
+      const res = await fetch(`/api/admin/customers/${c.id}/impersonate`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      window.open("/usage-check", "customer-portal");
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const submitBalance = async () => {
     if (!balanceModal) return;
@@ -377,6 +411,19 @@ export default function CustomersPage() {
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={() => openUsage(c)}
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40"
+                      >
+                        Usage
+                      </button>
+                      <button
+                        disabled={busyId === c.id}
+                        onClick={() => loginAsCustomer(c)}
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-main hover:bg-bg-subtle/40 disabled:opacity-50"
+                      >
+                        Login as
+                      </button>
+                      <button
                         onClick={() => {
                           setBalanceMsg(null);
                           setBalanceModal({ id: c.id, name: c.name || c.email || c.id, amountUsd: "", reason: "" });
@@ -453,6 +500,59 @@ export default function CustomersPage() {
             {balanceMsg && (
               <p className={`text-xs ${balanceMsg.ok ? "text-green-600" : "text-red-600"}`}>{balanceMsg.text}</p>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Usage history modal — what this customer actually ran and was charged */}
+      <Modal
+        isOpen={!!usageModal}
+        onClose={() => { setUsageModal(null); setUsageData(null); }}
+        title={`Usage — ${usageModal?.name || ""}`}
+        footer={
+          <Button variant="ghost" onClick={() => { setUsageModal(null); setUsageData(null); }}>Close</Button>
+        }
+      >
+        {usageBusy && <p className="text-sm text-text-muted">Loading…</p>}
+        {!usageBusy && usageData?.error && <p className="text-sm text-red-600">{usageData.error}</p>}
+        {!usageBusy && usageData && !usageData.error && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+              <span className="text-text-muted">Key: <span className="font-mono text-text-main">{usageData.keyMask || "—"}</span></span>
+              <span className="text-text-muted">Balance: <span className="text-text-main font-medium">{fmtMoney(usageData.balanceMicros)}</span></span>
+              <span className="text-text-muted">Charged (all-time): <span className="text-text-main">{fmtMoney(usageData.totals?.chargedMicros)}</span></span>
+            </div>
+            {usageData.items?.length === 0 ? (
+              <p className="text-sm text-text-muted">No requests recorded for this customer&rsquo;s active key.</p>
+            ) : (
+              <div className="max-h-80 overflow-y-auto rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-bg-subtle text-left text-text-muted">
+                    <tr>
+                      <th className="px-3 py-2">Time</th>
+                      <th className="px-3 py-2">Model</th>
+                      <th className="px-3 py-2 text-right">In</th>
+                      <th className="px-3 py-2 text-right">Out</th>
+                      <th className="px-3 py-2 text-right">Charged</th>
+                      <th className="px-3 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {usageData.items.map((r, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2 text-text-muted whitespace-nowrap">{r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}</td>
+                        <td className="px-3 py-2 font-mono">{r.model || "—"}</td>
+                        <td className="px-3 py-2 text-right">{r.promptTokens}</td>
+                        <td className="px-3 py-2 text-right">{r.completionTokens}</td>
+                        <td className="px-3 py-2 text-right">{r.chargedMicros == null ? "—" : fmtMoney(r.chargedMicros)}</td>
+                        <td className="px-3 py-2">{r.status || "ok"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-text-muted">Latest {usageData.items?.length ?? 0} requests matched to the customer&rsquo;s active key. Charged amounts come from the ledger (official estimate: {fmtMoney(usageData.totals?.officialMicros)}).</p>
           </div>
         )}
       </Modal>

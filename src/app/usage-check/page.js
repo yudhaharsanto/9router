@@ -448,6 +448,11 @@ function PublicModelsCard() {
                   <td className="py-2 pr-3">
                     <CopyBtn value={m.name} title="Copy model name" />
                     <code className="ml-1.5 font-mono text-text-main">{m.name}</code>
+                    {m.discountRate != null && (
+                      <span className="ml-2 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                        −{Math.round(m.discountRate * 100)}%
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-3 text-right text-text-muted tabular-nums">
                     {m.official

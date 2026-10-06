@@ -65,6 +65,25 @@ describe("GET /api/customer/pricing", () => {
     expect([401, 403]).toContain(res.status);
   });
 
+  it("per-model discountRate overrides the global rate; null rows keep global", async () => {
+    const pub = await import("@/lib/db/repos/publicModelsRepo.js");
+    await pub.upsertPublicModel({ publicName: "pub-direct", comboId: (await pub.getPublicModelByName("pub-direct")).comboId, enabled: true, discountRate: 0.2 });
+    await pub.upsertPublicModel({ publicName: "pub-auto", comboId: (await pub.getPublicModelByName("pub-auto")).comboId, enabled: true, discountRate: null });
+    const mod = await import("@/app/api/customer/pricing/route.js");
+    const res = await mod.GET(req());
+    const body = await res.json();
+    // override 0.2 → sell = official × 0.8; pub-auto falls back to global 0.5
+    const direct = body.items.find((m) => m.name === "pub-direct");
+    expect(direct.discountRate).toBeCloseTo(0.2, 6);
+    expect(direct.sell.input).toBeCloseTo(0.8, 6);
+    expect(direct.sell.output).toBeCloseTo(2.4, 6);
+    const auto = body.items.find((m) => m.name === "pub-auto");
+    expect(auto.discountRate).toBeCloseTo(0.5, 6);
+    expect(auto.sell.input).toBeCloseTo(2, 6);
+    // Restore the global-rate state the other test expects.
+    await pub.upsertPublicModel({ publicName: "pub-direct", comboId: (await pub.getPublicModelByName("pub-direct")).comboId, enabled: true, discountRate: null });
+  });
+
   it("returns per-model customer prices: auto-discounted rows + direct rows with cache %", async () => {
     const mod = await import("@/app/api/customer/pricing/route.js");
     const res = await mod.GET(req());

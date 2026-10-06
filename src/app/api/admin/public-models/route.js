@@ -53,6 +53,8 @@ export async function GET(request) {
         comboId: m.comboId,
         comboName: nameById.get(m.comboId) || "(deleted combo)",
         enabled: m.enabled,
+        // Per-model discount override (0–1) or null = global discountRate.
+        discountRate: m.discountRate ?? null,
         pricing: pricing[m.publicName] || null,
       };
       // Rows without a direct price bill members at official × (1 − discount);
@@ -106,7 +108,7 @@ export async function POST(request) {
     if (!combos.some((c) => c.id === comboId)) {
       return NextResponse.json({ error: "Unknown combo" }, { status: 400 });
     }
-    const row = await upsertPublicModel({ publicName, comboId, enabled });
+    const row = await upsertPublicModel({ publicName, comboId, enabled, discountRate: body?.discountRate ?? null });
     // Optional direct sell pricing { input, output, cached, ... } (USD/1M).
     // Only numeric fields are accepted — everything else is ignored.
     if (body?.pricing && typeof body.pricing === "object") {

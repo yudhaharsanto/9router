@@ -18,8 +18,18 @@ export async function POST(request) {
   // POSTs; non-browser clients send no Origin.
   const origin = request.headers.get("origin");
   if (origin) {
-    const expected = await getPublicOrigin(request) || new URL(request.url).origin;
-    if (origin !== expected) {
+    // Same-origin check against the host actually serving this request (and,
+    // when configured, the admin-set public origin) — NOT the public-origin
+    // fallback chain alone, which can end at http://localhost on a domain
+    // deployment and 403 legitimate browser calls. Browsers always send a
+    // truthful Origin, so comparing it to the request's own host is the
+    // fail-closed CSRF check; non-browser clients send no Origin.
+    const allowed = new Set(
+      [await getPublicOrigin(request), new URL(request.url).origin]
+        .filter(Boolean)
+        .map((o) => o.replace(/\/+$/, ""))
+    );
+    if (!allowed.has(origin.replace(/\/+$/, ""))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }

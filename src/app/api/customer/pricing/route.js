@@ -35,12 +35,20 @@ export async function GET(request) {
   const factor = 1 - effDiscount;
 
   const items = await Promise.all(mappings.map(async (m) => {
+    // Per-model discount override (admin sets per public model); null = global.
+    // Note Number(null) === 0, so the null check must come first.
+    const override = m.discountRate == null ? NaN : Number(m.discountRate);
+    const modelDiscount = Number.isFinite(override) && override >= 0 && override < 1
+      ? override
+      : effDiscount;
+    const factor = 1 - modelDiscount;
     const direct = directPricing[m.publicName];
     if (direct && typeof direct === "object") {
       const input = direct.input ?? 0;
       const output = direct.output ?? 0;
       return {
         name: m.publicName,
+        discountRate: modelDiscount,
         official: { input, output, cachedPct: direct.cachedPct ?? null },
         sell: {
           input: input * factor,
@@ -77,6 +85,7 @@ export async function GET(request) {
     }
     return {
       name: m.publicName,
+      discountRate: modelDiscount,
       official: any ? { input: officialInput, output: officialOutput, cachedPct: cachedPctOf({ input: officialInput, cached: officialCached }) } : null,
       sell: {
         input,

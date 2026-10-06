@@ -59,10 +59,20 @@ export function estimateCostMicros(tokens, sellPricing) {
 export async function getPublicSellPricing(publicName) {
   if (!publicName) return null;
   const { getPublicPricing } = await import("@/lib/db/repos/pricingRepo.js");
+  const { getPublicModelByName } = await import("@/lib/db/repos/publicModelsRepo.js");
   const table = await getPublicPricing();
   const entry = table[publicName];
   if (!entry || typeof entry !== "object") return null;
-  const discount = await getDiscountRate();
+  // Per-model discount override wins; null/absent falls back to the global rate.
+  // Note Number(null) === 0, so the null check must come first.
+  const [modelRow, globalDiscount] = await Promise.all([
+    getPublicModelByName(publicName),
+    getDiscountRate(),
+  ]);
+  const override = modelRow?.discountRate == null ? NaN : Number(modelRow.discountRate);
+  const discount = Number.isFinite(override) && override >= 0 && override < 1
+    ? override
+    : globalDiscount;
   const factor = 1 - discount;
   // cachedPct is % of the (official) input rate; carried through unscaled so
   // the customer's cached rate is that % of their discounted input. Legacy

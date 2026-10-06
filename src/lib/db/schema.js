@@ -298,6 +298,7 @@ export const TABLES = {
       publicName: "TEXT UNIQUE NOT NULL",
       comboId: "TEXT NOT NULL",
       enabled: "INTEGER NOT NULL DEFAULT 1",
+      discountRate: "REAL",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
     },

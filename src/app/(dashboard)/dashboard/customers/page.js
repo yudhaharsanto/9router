@@ -7,6 +7,36 @@ import Modal from "@/shared/components/Modal";
 import Button from "@/shared/components/Button";
 import { CardSkeleton } from "@/shared/components/Loading";
 
+// Compact per-row action dropdown — keeps table rows clean when a row has
+// several actions. Items: { label, onClick, danger? }.
+function ActionsMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative inline-block text-left">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="rounded-md border border-border px-2.5 py-1 text-xs text-text-main hover:bg-bg-subtle/40"
+      >
+        Actions ▾
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-36 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-lg">
+          {items.map((it) => (
+            <button
+              key={it.label}
+              onClick={(e) => { e.preventDefault(); setOpen(false); it.onClick(); }}
+              className={`block w-full px-3 py-2 text-left text-xs hover:bg-bg-subtle/60 ${it.danger ? "text-red-600" : "text-text-main"}`}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Money is stored as integer micro-USD (µ$) — same convention as the portal.
 function fmtMoney(micros) {
   const v = (Number(micros) || 0) / 1_000_000;
@@ -267,6 +297,10 @@ export default function CustomersPage() {
           publicName: form.publicName.trim(),
           comboId: form.comboId,
           enabled: true,
+          // Edit form carries the per-model discount; "" clears it (null).
+          ...(form.discountRate !== undefined
+            ? { discountRate: form.discountRate === "" ? null : Number(form.discountRate) }
+            : {}),
           ...(Object.keys(pricing).length > 0 ? { pricing } : {}),
         }),
       });
@@ -293,6 +327,7 @@ export default function CustomersPage() {
         output: m.pricing?.output !== undefined && m.pricing?.output !== null ? String(m.pricing.output) : "",
         cachedPct: m.pricing?.cachedPct !== undefined && m.pricing?.cachedPct !== null ? String(m.pricing.cachedPct) : "",
       },
+      discountRate: m.discountRate != null ? String(m.discountRate) : "",
     });
     setNewPub({ publicName: "", comboId: "", pricing: { input: "", output: "", cachedPct: "" } });
   };
@@ -703,6 +738,7 @@ export default function CustomersPage() {
                 <th className="px-6 py-3">Public Name</th>
                 <th className="px-6 py-3">Combo</th>
                 <th className="px-6 py-3">Price $/1M in / out (official → customer)</th>
+                <th className="px-6 py-3">Discount</th>
                 <th className="px-6 py-3">Status</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
@@ -710,7 +746,7 @@ export default function CustomersPage() {
             <tbody className="divide-y divide-border">
               {!publicModels || publicModels.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-text-muted">
+                  <td colSpan={6} className="px-6 py-8 text-center text-text-muted">
                     No public models yet. Create combos on the Combo page first.
                   </td>
                 </tr>
@@ -740,33 +776,24 @@ export default function CustomersPage() {
                         <span className="text-text-muted">member price</span>
                       )}
                     </td>
+                    <td className="px-6 py-3 text-xs">
+                      {m.discountRate != null ? (
+                        <span className="font-medium">{Math.round(m.discountRate * 100)}%</span>
+                      ) : (
+                        <span className="text-text-muted">global</span>
+                      )}
+                    </td>
                     <td className="px-6 py-3">
                       <Badge variant={m.enabled ? "success" : "error"}>{m.enabled ? "enabled" : "disabled"}</Badge>
                     </td>
                     <td className="px-6 py-3 text-right">
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          disabled={pubBusy}
-                          onClick={() => startEditPublicModel(m)}
-                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-bg-subtle disabled:opacity-50"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          disabled={pubBusy}
-                          onClick={() => togglePublicModel(m)}
-                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-bg-subtle disabled:opacity-50"
-                        >
-                          {m.enabled ? "Disable" : "Enable"}
-                        </button>
-                        <button
-                          disabled={pubBusy}
-                          onClick={() => deletePublicModel(m)}
-                          className="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-600 hover:bg-red-500/10 disabled:opacity-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <ActionsMenu
+                        items={[
+                          { label: "Edit price", onClick: () => startEditPublicModel(m) },
+                          { label: m.enabled ? "Disable" : "Enable", onClick: () => togglePublicModel(m) },
+                          { label: "Delete", onClick: () => deletePublicModel(m), danger: true },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))
@@ -796,6 +823,12 @@ export default function CustomersPage() {
                 onChange={(e) => setEditingPub((s) => ({ ...s, pricing: { ...s.pricing, cachedPct: e.target.value } }))}
                 className="w-36 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
               />
+              <input
+                type="number" step="0.05" min="0" max="0.95" placeholder="Discount 0–1 (blank = global)"
+                value={editingPub.discountRate}
+                onChange={(e) => setEditingPub((s) => ({ ...s, discountRate: e.target.value }))}
+                className="w-44 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+              />
               <button
                 onClick={() => savePublicModel(editingPub)}
                 disabled={pubBusy}
@@ -811,7 +844,7 @@ export default function CustomersPage() {
               </button>
             </div>
             <p className="text-xs text-text-muted mt-2">
-              Kosongkan semua → kembali ke harga member (official × (1 − discount)).
+              Discount kosong → pakai diskon global. Harga & discount kosong → harga member (official × (1 − discount)).
             </p>
           </div>
         )}

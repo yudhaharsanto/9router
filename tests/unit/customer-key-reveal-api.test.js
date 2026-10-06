@@ -63,4 +63,16 @@ describe("POST /api/customer/keys/reveal", () => {
     const res = await mod.POST(req({ headers: { origin: "https://evil.example" } }));
     expect(res.status).toBe(403);
   });
+
+  it("accepts an Origin that matches the request host even when the public-origin chain falls back to localhost", async () => {
+    // Domain deployment without publicOrigin setting/BASE_URL env: the old gate
+    // compared against http://localhost:20128 and 403'd the browser's copy call.
+    const mod = await import("@/app/api/customer/keys/reveal/route.js");
+    const res = await mod.POST(req({
+      headers: {
+        origin: "http://localhost:20128",
+      },
+    }));
+    expect(res.status).toBe(200);
+  });
 });

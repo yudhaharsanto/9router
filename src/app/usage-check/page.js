@@ -731,6 +731,16 @@ function TopUpCard({ refreshBalance }) {
   );
 }
 
+function StatTile({ label, value, hint }) {
+  return (
+    <div className="rounded-[10px] border border-border-subtle bg-surface-2/40 px-3 py-2">
+      <div className="text-[11px] text-text-muted">{label}</div>
+      <div className="text-sm font-semibold tabular-nums">{value}</div>
+      {hint && <div className="text-[10px] text-text-muted">{hint}</div>}
+    </div>
+  );
+}
+
 function BalanceCard({ balance }) {
   const micros = Number(balance?.balanceMicros) || 0;
   const reserved = Number(balance?.reservedMicros) || 0;
@@ -850,16 +860,19 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
 function UsageCard() {
   const [period, setPeriod] = useState("7d");
   const [items, setItems] = useState(null);
-  const [totals, setTotals] = useState({ officialMicros: 0, chargedMicros: 0, savedMicros: 0 });
+  const [totals, setTotals] = useState({
+    officialMicros: 0, chargedMicros: 0, savedMicros: 0,
+    totalRequests: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCacheCreationTokens: 0,
+  });
 
   const load = useCallback((p) => {
     fetch(`/api/customer/usage?period=${encodeURIComponent(p)}`, {
       headers: { "Cache-Control": "no-store" },
     })
-      .then((r) => (r.ok ? r.json() : { items: [], totals: { officialMicros: 0, chargedMicros: 0, savedMicros: 0 } }))
+      .then((r) => (r.ok ? r.json() : { items: [], totals: {} }))
       .then((d) => {
         setItems(d.items || []);
-        setTotals(d.totals || { officialMicros: 0, chargedMicros: 0, savedMicros: 0 });
+        setTotals({ totalRequests: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCacheCreationTokens: 0, ...d.totals });
       })
       .catch(() => setItems([]));
   }, []);
@@ -868,8 +881,6 @@ function UsageCard() {
     load(period);
   }, [period, load]);
 
-  const totalIn = (items || []).reduce((s, r) => s + (Number(r.promptTokens) || 0), 0);
-  const totalOut = (items || []).reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);
 
   return (
     <Card className="flex flex-col gap-3">
@@ -891,6 +902,12 @@ function UsageCard() {
         </div>
       ) : (
         <>
+          <div className="grid grid-cols-2 gap-2">
+            <StatTile label="Requests" value={String(totals.totalRequests ?? items.length)} />
+            <StatTile label="Input" value={fmtCompact(totals.totalPromptTokens || 0)} hint="tokens" />
+            <StatTile label="Output" value={fmtCompact(totals.totalCompletionTokens || 0)} hint="tokens" />
+            <StatTile label="Cached" value={fmtCompact(totals.totalCachedTokens || 0)} hint={totals.totalCacheCreationTokens > 0 ? `+${fmtCompact(totals.totalCacheCreationTokens)} write` : "tokens"} />
+          </div>
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-2xl font-bold tabular-nums text-primary">
               {fmtMoney(totals.chargedMicros || 0)}
@@ -900,9 +917,6 @@ function UsageCard() {
               {totals.savedMicros > 0 && (
                 <>, saved {fmtMoney(totals.savedMicros)} vs official {fmtMoney(totals.officialMicros || 0)}</>
               )}
-            </span>
-            <span className="ml-auto text-xs text-text-muted tabular-nums">
-              {fmtCompact(totalIn)} in / {fmtCompact(totalOut)} out
             </span>
           </div>
           <div className="max-h-96 overflow-y-auto rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60 custom-scrollbar">

@@ -47,7 +47,7 @@ export async function GET(request) {
   // and move the filter into SQL.
   const db = await getAdapter();
   const rows = db.all(
-    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey, meta
+    `SELECT timestamp, provider, model, promptTokens, completionTokens, cost, status, apiKey, tokens, meta
      FROM usageHistory WHERE timestamp >= COALESCE(?, '1970-01-01')
      ORDER BY id DESC LIMIT 1000`,
     [startDate ? startDate.toISOString() : null]
@@ -67,6 +67,7 @@ export async function GET(request) {
   const parseMeta = (raw) => {
     try { return JSON.parse(raw || "{}") || {}; } catch { return {}; }
   };
+  const parseTokens = parseMeta;
   // Published-model view: usageHistory records the upstream model name (combo
   // members etc.), but the customer only knows public names. Map each distinct
   // model to its published public name; rows whose model belongs to no enabled
@@ -92,6 +93,8 @@ export async function GET(request) {
       model: modelMap.get(r.model) || r.model,
       promptTokens: r.promptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
+      cachedTokens: (parseTokens(r.tokens).cached_tokens ?? parseTokens(r.tokens).cache_read_input_tokens ?? 0) || 0,
+      cacheCreationTokens: parseTokens(r.tokens).cache_creation_input_tokens || 0,
       cost: r.cost,
       chargedMicros: chargedByHoldRef.get(parseMeta(r.meta).holdRefId) ?? null,
       status: r.status,
@@ -103,8 +106,19 @@ export async function GET(request) {
   // usage_debit ledger entries in the same window (integer micro-USD).
   const officialMicros = Math.round(items.reduce((s, r) => s + (Number(r.cost) || 0) * 1_000_000, 0));
   const chargedMicros = -debitRows.reduce((s, r) => s + Number(r.amountMicros), 0); // debits are negative
+  const totalRequests = items.length;
+  const totalPromptTokens = items.reduce((s, r) => s + (Number(r.promptTokens) || 0), 0);
+  const totalCompletionTokens = items.reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);
+  const totalCachedTokens = items.reduce((s, r) => s + (Number(r.cachedTokens) || 0), 0);
+  const totalCacheCreationTokens = items.reduce((s, r) => s + (Number(r.cacheCreationTokens) || 0), 0);
   return NextResponse.json(
-    { items, totals: { officialMicros, chargedMicros, savedMicros: Math.max(0, officialMicros - chargedMicros) } },
+    {
+      items,
+      totals: {
+        officialMicros, chargedMicros, savedMicros: Math.max(0, officialMicros - chargedMicros),
+        totalRequests, totalPromptTokens, totalCompletionTokens, totalCachedTokens, totalCacheCreationTokens,
+      },
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

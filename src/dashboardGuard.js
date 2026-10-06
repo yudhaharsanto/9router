@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/localDb";
+import { isCustomerKey } from "@/lib/billing/customerGate.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { hasTrustedPeerHeaders } from "@/lib/auth/trustedPeer";
@@ -168,6 +169,11 @@ async function hasValidApiKey(request) {
 async function canAccessPublicLlmApi(request) {
   if (isLocalRequest(request)) return true;
   if (await hasValidCliToken(request)) return true;
+  // sk-cust- keys live in customerKeys (hashed), not apiKeys — their real
+  // authorization (validity + balance) happens in the customer billing gate
+  // inside the chat handler; here we only let them past the remote-access gate.
+  const apiKey = extractApiKey(request);
+  if (apiKey && isCustomerKey(apiKey)) return true;
   return await hasValidApiKey(request);
 }
 

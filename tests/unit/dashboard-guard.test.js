@@ -156,6 +156,18 @@ describe("dashboard guard public LLM API access", () => {
     expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
   });
 
+  it("allows remote public LLM API with customer sk-cust- key", async () => {
+    const response = await proxy(request("/v1/chat/completions", {
+      host: "router.example.com",
+      authorization: "Bearer sk-cust-abc123",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+    // Real authorization (validity + balance) happens in the chat handler's
+    // customer gate, not here — the apiKeys lookup must not run for it.
+    expect(mocks.validateApiKey).not.toHaveBeenCalled();
+  });
+
   it("allows remote public LLM API with valid bearer API key", async () => {
     mocks.validateApiKey.mockResolvedValue(true);
 

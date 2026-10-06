@@ -542,7 +542,6 @@ export default function CustomersPage() {
                   <thead className="bg-bg-subtle text-left text-text-muted">
                     <tr>
                       <th className="px-3 py-2">Time</th>
-                      <th className="px-3 py-2">Model</th>
                       <th className="px-3 py-2 text-right">In</th>
                       <th className="px-3 py-2 text-right">Out</th>
                       <th className="px-3 py-2 text-right">Charged</th>
@@ -553,7 +552,6 @@ export default function CustomersPage() {
                     {usageData.items.map((r, i) => (
                       <tr key={i}>
                         <td className="px-3 py-2 text-text-muted whitespace-nowrap">{r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}</td>
-                        <td className="px-3 py-2 font-mono">{r.model || "—"}</td>
                         <td className="px-3 py-2 text-right">{r.promptTokens}</td>
                         <td className="px-3 py-2 text-right">{r.completionTokens}</td>
                         <td className="px-3 py-2 text-right">{r.chargedMicros == null ? "—" : fmtMoney(r.chargedMicros)}</td>

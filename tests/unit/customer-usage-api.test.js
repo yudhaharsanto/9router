@@ -110,7 +110,7 @@ describe("GET /api/customer/usage", () => {
     // Price the model so the usage row gets a nonzero official cost.
     const { updatePricing } = await import("@/lib/db/repos/pricingRepo.js");
     await updatePricing({ p: { m: { input: 1, output: 2 } } }); // $1/$2 per 1M
-    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 10, completion_tokens: 10 }, apiKey: key }); // official cost > 0
+    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 10, completion_tokens: 10 }, apiKey: key, meta: { holdRefId: "req-t1" } }); // official cost > 0
 
     // Charge less than official → saved = official − charged.
     const ledger = await import("@/lib/db/repos/ledgerRepo.js");
@@ -173,6 +173,56 @@ describe("GET /api/customer/usage", () => {
     const body = await (await mod.GET(req("/api/customer/usage", token))).json();
     expect(body.items.length).toBe(1);
     expect(body.items[0].chargedMicros).toBe(10);
+  });
+
+  it("billing filter splits balance rows (holdRefId) from package rows (publicModel)", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-billing" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    // Earlier tests in this file publish public models, so this one must too
+    // (publishedAnything is file-global). Balance row: holdRefId meta. Package
+    // row: publicModel meta — passes the publish filter via its meta alone.
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: `bal-combo-${Date.now()}`, kind: "fallback", models: ["m-bal"] });
+    await upsertPublicModel({ publicName: "m-bal", comboId: combo.id, enabled: true });
+    await db.saveRequestUsage({ provider: "p", model: "m-bal", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key, meta: { holdRefId: "req-bal" } });
+    await db.saveRequestUsage({ provider: "p", model: "m-pkg", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key, meta: { publicModel: "my-pkg-model" } });
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const bal = await (await mod.GET(req("/api/customer/usage?billing=balance", token))).json();
+    expect(bal.items.map((i) => i.model)).toEqual(["m-bal"]);
+    const pkg = await (await mod.GET(req("/api/customer/usage?billing=package", token))).json();
+    expect(pkg.items.map((i) => i.model)).toEqual(["my-pkg-model"]);
+    const all = await (await mod.GET(req("/api/customer/usage?billing=all", token))).json();
+    expect(all.items.length).toBe(2);
+  });
+
+  it("totals use the ledger's officialCostMicros (admin official price) when present", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-official" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const { updatePricing } = await import("@/lib/db/repos/pricingRepo.js");
+    await updatePricing({ p: { m: { input: 1, output: 2 } } }); // catalog cost 30 µ$
+    // Earlier tests enabled public models, so this row must be published to
+    // pass the portal's publish filter.
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: `off-combo-${Date.now()}`, kind: "fallback", models: ["m"] });
+    await upsertPublicModel({ publicName: "m-pub", comboId: combo.id, enabled: true });
+    await db.saveRequestUsage({ provider: "p", model: "m", tokens: { prompt_tokens: 10, completion_tokens: 10 }, apiKey: key, meta: { holdRefId: "req-off" } });
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    await ledger.creditCustomer(c.id, 1_000_000, { refType: "test", refId: "seed-t3" });
+    await ledger.holdReserve(c.id, 100_000, "req-off");
+    // Charged 10 µ$; ledger records the admin official price 50 µ$ (≠ catalog).
+    await ledger.settleUsage(c.id, "req-off", 10, { officialCostMicros: 50 });
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage", token))).json();
+    expect(body.totals.officialMicros).toBe(50);
+    expect(body.totals.chargedMicros).toBe(10);
+    expect(body.totals.savedMicros).toBe(40);
+    expect(body.items[0].officialMicros).toBe(50);
   });
 
   it("saved floors at 0 when charged exceeds official estimate", async () => {

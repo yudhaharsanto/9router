@@ -5,7 +5,7 @@
 // API key, usage, ledger, pricing). QRIS top-up opens in a modal dialog.
 // The old password-based lookup (POST /api/public/key-usage) is retired.
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Card, Button, SegmentedControl } from "@/shared/components";
+import { Card, Button, SegmentedControl, Modal } from "@/shared/components";
 // import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
@@ -68,6 +68,7 @@ const PORTAL_TABS = [
   { id: "api", label: "API key", icon: "vpn_key" },
   { id: "usage", label: "Usage", icon: "monitoring" },
   { id: "topup", label: "Top up", icon: "account_balance_wallet" },
+  { id: "packages", label: "Packages", icon: "inventory_2" },
 ];
 
 export default function UsageCheckPage() {
@@ -247,7 +248,14 @@ function GuestView() {
 /* ── Active portal: topbar (brand + balance + account) and nav tabs ── */
 
 function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefresh, origin }) {
-  const [tab, setTab] = useState("api");
+  // Remember the last tab per browser; falls back to "api".
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem("usage-check-tab");
+      if (saved && PORTAL_TABS.some((t) => t.id === saved)) return saved;
+    } catch {}
+    return "api";
+  });
   const [plaintext, setPlaintext] = useState(revealedKey || null);
   const contentRef = useRef(null);
 
@@ -273,6 +281,9 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefres
 
   const pickTab = (id) => {
     setTab(id);
+    try {
+      window.localStorage.setItem("usage-check-tab", id);
+    } catch {}
     // Keep the tab bar in view when switching from a tall section.
     if (contentRef.current) contentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -349,6 +360,7 @@ function PortalView({ me, banner, revealedKey, onRegenerated, onLogout, onRefres
             <TopUpCard refreshBalance={onRefresh} />
           </div>
         )}
+        {tab === "packages" && <PackagesCard />}
       </main>
     </div>
   );
@@ -758,7 +770,12 @@ function BalanceCard({ balance }) {
         {fmtMoney(micros)}
       </span>
       <span className="text-[11px] text-text-muted">
-        {reserved > 0 ? `${fmtMoney(reserved)} held for in-flight requests. ` : ""}Deducted per request.
+        {reserved > 0 ? (
+          <>
+            <span className="font-medium text-warning" title="Held for in-flight requests, released on completion">Reserved {fmtMoney(reserved)}</span> ·{" "}
+          </>
+        ) : null}
+        Deducted per request.
       </span>
     </Card>
   );
@@ -863,16 +880,23 @@ function ApiKeyCard({ mask, plaintext, onRegenerate, origin }) {
   );
 }
 
+const USAGE_BILLING = [
+  { value: "all", label: "All" },
+  { value: "balance", label: "Balance" },
+  { value: "package", label: "Package" },
+];
+
 function UsageCard() {
   const [period, setPeriod] = useState("7d");
+  const [billing, setBilling] = useState("all");
   const [items, setItems] = useState(null);
   const [totals, setTotals] = useState({
     officialMicros: 0, chargedMicros: 0, savedMicros: 0,
     totalRequests: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCacheCreationTokens: 0,
   });
 
-  const load = useCallback((p) => {
-    fetch(`/api/customer/usage?period=${encodeURIComponent(p)}`, {
+  const load = useCallback((p, b) => {
+    fetch(`/api/customer/usage?period=${encodeURIComponent(p)}&billing=${encodeURIComponent(b)}`, {
       headers: { "Cache-Control": "no-store" },
     })
       .then((r) => (r.ok ? r.json() : { items: [], totals: {} }))
@@ -884,20 +908,28 @@ function UsageCard() {
   }, []);
 
   useEffect(() => {
-    load(period);
-  }, [period, load]);
+    load(period, billing);
+  }, [period, billing, load]);
 
 
   return (
     <Card className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-sm font-semibold text-primary">Usage</h3>
-        <SegmentedControl
-          options={USAGE_PERIODS}
-          value={period}
-          onChange={setPeriod}
-          size="sm"
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <SegmentedControl
+            options={USAGE_BILLING}
+            value={billing}
+            onChange={setBilling}
+            size="sm"
+          />
+          <SegmentedControl
+            options={USAGE_PERIODS}
+            value={period}
+            onChange={setPeriod}
+            size="sm"
+          />
+        </div>
       </div>
 
       {items === null ? (
@@ -913,6 +945,11 @@ function UsageCard() {
             <span className="text-3xl font-bold tabular-nums text-text-main tracking-tight">
               {fmtMoney(totals.chargedMicros || 0)}
             </span>
+            {totals.officialMicros > (totals.chargedMicros || 0) && (
+              <span className="text-sm text-text-subtle tabular-nums line-through" title="Price before discount">
+                {fmtMoney(totals.officialMicros)}
+              </span>
+            )}
             <span className="text-xs text-text-muted">billed this period</span>
             {totals.savedMicros > 0 && (
               <span className="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success tabular-nums">
@@ -960,12 +997,16 @@ function UsageRow({ r }) {
             <span className="text-warning">{fmtCompact(Number(r.cachedTokens) + Number(r.cacheCreationTokens))} cached</span>
           )}
         </div>
-        <div className="text-right shrink-0 w-20">
+        <div className="text-right shrink-0 w-24">
           <div className="text-xs font-semibold tabular-nums">
             {r.chargedMicros != null
               ? fmtMoney(r.chargedMicros)
               : fmtMoney(Math.round((Number(r.cost) || 0) * 1_000_000))}
           </div>
+          {/* Pre-discount official price next to what was actually paid. */}
+          {r.officialMicros != null && Number(r.officialMicros) > (r.chargedMicros ?? 0) && (
+            <div className="text-[10px] text-text-subtle tabular-nums line-through">{fmtMoney(r.officialMicros)}</div>
+          )}
           <div className={`text-[10px] ${failed ? "text-danger" : "text-text-subtle"}`}>{failed ? r.status : "ok"}</div>
         </div>
       </div>
@@ -989,14 +1030,19 @@ function LedgerCard({ refresh }) {
   }, [refresh]);
 
   // Tabs collapse the noise: customers read top-ups and usage; reserve
-  // hold/release pairs are internal plumbing of a single request.
+  // hold/release pairs are internal plumbing of a single request — they carry
+  // amountMicros 0 (the real held amount lives in meta), so showing them
+  // reads as "Release $0". Money state lives in the Balance card (incl.
+  // reserved); per-request charges show as Usage debits.
   const TABS = [
     { id: "all", label: "All" },
     { id: "topup_credit", label: "Top-ups" },
     { id: "usage_debit", label: "Usage" },
     { id: "adjustment", label: "Adjustments" },
   ];
-  const filtered = (items || []).filter((e) => (tab === "all" ? true : e.type === tab));
+  const filtered = (items || [])
+    .filter((e) => e.type !== "reserve_hold" && e.type !== "reserve_release")
+    .filter((e) => (tab === "all" ? true : e.type === tab));
 
   return (
     <Card className="flex flex-col gap-3">
@@ -1127,6 +1173,322 @@ function CodeBlock({ code, label }) {
           <CopyBtn value={code} title="Copy" />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Token packages: own instances (active quota) + buyable catalog ──
+
+// Purchase flow mirrors TopUpCard: Tako exposes no QR payload/image (their
+// QRIS renders only on the tako.id/pay page, X-Frame-Options: SAMEORIGIN), so
+// the payment opens in a popup we keep a handle to. We poll the packages
+// endpoint until the pending instance activates (webhook → applyTopupCredit),
+// then close the popup and show success in-place.
+function PackagesCard() {
+  const [data, setData] = useState(null); // { catalog, instances }
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [notice, setNotice] = useState(null); // manual-mode message
+  const [paying, setPaying] = useState(null); // { topupId, packageId, name, priceIdr, paymentUrl }
+  const [paidName, setPaidName] = useState(null); // package name just activated
+  const popupRef = useRef(null);
+
+  const load = useCallback(() => {
+    return fetch("/api/customer/packages", { headers: { "Cache-Control": "no-store" } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => {
+        setData(d);
+        return d;
+      })
+      .catch((e) => setError(String(e?.message || e)));
+  }, []);
+
+  useEffect(() => {
+    load();
+    // Keep remaining-token numbers fresh while the tab is visible.
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  // Poll while a purchase is pending; refresh the whole card when it activates.
+  const paidRef = useRef(false);
+  useEffect(() => {
+    if (!paying?.topupId || paidRef.current) return;
+    let cancelled = false;
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch("/api/customer/packages", { headers: { "Cache-Control": "no-store" } });
+        if (!r.ok) return;
+        const d = await r.json();
+        const inst = (d.instances || []).find(
+          (i) => i.status === "active" && i.topupId === paying.topupId,
+        );
+        if (inst && !cancelled) {
+          paidRef.current = true;
+          popupRef.current?.close();
+          setData(d);
+          setPaidName(paying.name);
+          setPaying(null);
+        }
+      } catch {}
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [paying]);
+
+  const buy = async (pkg) => {
+    setBusyId(pkg.id);
+    setError("");
+    setNotice(null);
+    setPaidName(null);
+    paidRef.current = false;
+    // Open synchronously inside the click gesture so popup blockers allow it.
+    popupRef.current = window.open("", "qris-payment", "popup=yes,width=480,height=780");
+    try {
+      const res = await fetch("/api/customer/packages/purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packageId: pkg.id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        popupRef.current?.close();
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      if (body.manual) {
+        popupRef.current?.close();
+        setNotice(body.message);
+        await load();
+      } else if (body.topup?.paymentUrl) {
+        popupRef.current?.location.replace(body.topup.paymentUrl);
+        setPaying({
+          topupId: body.topup.id,
+          packageId: pkg.id,
+          name: pkg.name,
+          priceIdr: pkg.priceIdr,
+          paymentUrl: body.topup.paymentUrl,
+        });
+      } else {
+        popupRef.current?.close();
+        setNotice("Purchase recorded. The package activates once payment is confirmed.");
+        await load();
+      }
+    } catch (e) {
+      popupRef.current?.close();
+      setError(String(e?.message || e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reopenPayment = () => {
+    const win = window.open(paying?.paymentUrl || "", "qris-payment", "popup=yes,width=480,height=780");
+    popupRef.current = win;
+  };
+
+  if (error && !data) {
+    return (
+      <Card>
+        <p className="text-sm text-red-500">Failed to load packages: {error}</p>
+      </Card>
+    );
+  }
+  if (!data) {
+    return (
+      <Card>
+        <div className="h-40 rounded-[10px] bg-surface-2 animate-pulse" />
+      </Card>
+    );
+  }
+
+  const active = data.instances.filter((i) => i.status === "active");
+  const past = data.instances.filter((i) => i.status !== "active");
+  const catalog = data.catalog.filter((p) => p.priceIdr >= 1 && p.active !== false);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {notice && (
+        <div
+          className="rounded-[10px] border border-border-subtle bg-surface-2 px-4 py-3 text-sm text-text-muted"
+          role="status"
+        >
+          {notice}
+        </div>
+      )}
+      {paidName && (
+        <div
+          className="rounded-[10px] border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-success flex items-center gap-1.5"
+          role="status"
+        >
+          <span className="material-symbols-outlined text-[16px]">check_circle</span>
+          {paidName} is now active.
+        </div>
+      )}
+
+      {/* Active quota */}
+      <Card className="flex flex-col gap-3">
+        <h3 className="text-sm font-semibold text-primary">Active packages</h3>
+        {active.length === 0 ? (
+          <div className="h-20 rounded-[10px] border border-dashed border-border-subtle flex flex-col items-center justify-center gap-1 text-[11px] text-text-muted">
+            <span className="material-symbols-outlined text-[20px] text-text-subtle">inventory_2</span>
+            No active packages.
+          </div>
+        ) : (
+          active.map((i) => {
+            const cat = data.catalog.find((p) => p.id === i.packageId);
+            const models = cat?.models || [];
+            const scoped = models.length > 0 && !models.includes("*");
+            const pct = i.tokensGranted > 0 ? Math.round((i.tokensRemaining / i.tokensGranted) * 100) : 0;
+            const low = pct <= 10;
+            return (
+              <div key={i.id} className="rounded-[10px] border border-border-subtle bg-surface-2/40 p-4 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <p className="font-semibold text-sm text-text-main truncate">{cat?.name || i.packageId}</p>
+                    {i.expiresAt ? (
+                      <span className="text-[11px] text-text-muted shrink-0">
+                        until {new Date(i.expiresAt).toLocaleDateString()}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-text-muted shrink-0">no expiry</span>
+                    )}
+                  </div>
+                  <span className={`text-xs font-semibold tabular-nums shrink-0 ${low ? "text-warning" : "text-primary"}`}>
+                    {Math.max(pct, 0)}%
+                  </span>
+                </div>
+                <div
+                  className="h-2 rounded-full bg-bg-subtle overflow-hidden"
+                  role="progressbar"
+                  aria-valuenow={Math.max(pct, 0)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${cat?.name || "Package"} quota remaining`}
+                >
+                  <div
+                    className={`h-full rounded-full transition-[width] ${low ? "bg-warning" : "bg-brand-500"}`}
+                    style={{ width: `${Math.max(pct, 0)}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 flex-wrap text-[11px] text-text-muted">
+                  <span className="tabular-nums">
+                    {i.tokensRemaining.toLocaleString()} / {i.tokensGranted.toLocaleString()} tokens remaining
+                  </span>
+                  {scoped && (
+                    <span className="flex items-center gap-1 min-w-0">
+                      <span className="material-symbols-outlined text-[13px]">bolt</span>
+                      <code className="font-mono truncate">{models.join(", ")}</code>
+                      <CopyBtn value={models.join(", ")} title="Copy model name" />
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </Card>
+
+      {/* Catalog */}
+      <Card className="flex flex-col gap-3">
+        <h3 className="text-sm font-semibold text-primary">Buy packages</h3>
+        {catalog.length === 0 ? (
+          <div className="h-20 rounded-[10px] border border-dashed border-border-subtle flex flex-col items-center justify-center gap-1 text-[11px] text-text-muted">
+            <span className="material-symbols-outlined text-[20px] text-text-subtle">storefront</span>
+            No packages available for purchase yet.
+          </div>
+        ) : (
+          catalog.map((p) => {
+            const scoped = p.models?.length > 0 && !p.models.includes("*");
+            return (
+              <div
+                key={p.id}
+                className="rounded-[10px] border border-border-subtle bg-surface-2/40 p-4 flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0 flex flex-col gap-1">
+                  <p className="font-semibold text-sm text-text-main">{p.name}</p>
+                  <p className="text-[11px] text-text-muted flex items-center gap-1.5 flex-wrap">
+                    <span className="tabular-nums">{fmtCompact(p.tokens)} tokens</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{p.durationDays ? `${p.durationDays} days` : "no expiry"}</span>
+                    {scoped && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <code className="font-mono truncate">{p.models.join(", ")}</code>
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-sm font-semibold tabular-nums text-text-main">
+                    Rp {fmtIdr(p.priceIdr)}
+                  </span>
+                  <Button size="sm" onClick={() => buy(p)} disabled={busyId === p.id || !!paying}>
+                    {busyId === p.id ? "…" : "Buy"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <p className="text-[11px] text-text-muted">
+          Package models are billed from the package quota, not the balance. Requests outside the
+          package scope use the balance as usual.
+        </p>
+      </Card>
+
+      {past.length > 0 && (
+        <Card className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold text-primary">Package history</h3>
+          <div className="rounded-[10px] border border-border-subtle divide-y divide-border-subtle/60">
+            {past.map((i) => {
+              const cat = data.catalog.find((p) => p.id === i.packageId);
+              return (
+                <div key={i.id} className="px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="font-medium text-text-main">{cat?.name || i.packageId}</span>
+                  <span className="text-[11px] text-text-muted tabular-nums">
+                    {i.status} · {i.tokensUsed.toLocaleString()} tokens used
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Payment pending dialog */}
+      <Modal
+        isOpen={!!paying}
+        onClose={() => setPaying(null)}
+        title="Waiting for payment"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPaying(null)}>Close</Button>
+            <Button variant="outline" icon="qr_code_2" onClick={reopenPayment}>
+              Reopen QRIS window
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-medium text-text-main">{paying?.name}</span>
+            <span className="text-lg font-bold tabular-nums text-primary">
+              Rp {(paying?.priceIdr || 0).toLocaleString("id-ID")}
+            </span>
+          </div>
+          <p className="text-xs text-text-muted flex items-start gap-1.5">
+            <span className="material-symbols-outlined text-[15px] mt-px animate-spin">
+              progress_activity
+            </span>
+            Scan the QRIS in the payment window. This page updates automatically once paid — the
+            window closes on its own.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

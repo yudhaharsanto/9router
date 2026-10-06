@@ -131,6 +131,12 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     endpoint: endpoint || null,
     // Customer traffic: thread the billing hold so the portal can join each
     // usage row to its actual ledger debit (meta was always {} before).
-    meta: customerBilling?.holdRefId ? { holdRefId: customerBilling.holdRefId } : undefined,
+    // Package-billed rows carry the package's public model name so the portal
+    // shows the name the customer actually called, not the upstream member.
+    meta: customerBilling?.holdRefId
+      ? { holdRefId: customerBilling.holdRefId }
+      : customerBilling?.publicName
+        ? { publicModel: customerBilling.publicName }
+        : undefined,
   }).catch(() => {});
 }

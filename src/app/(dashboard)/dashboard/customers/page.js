@@ -25,6 +25,9 @@ function ActionsMenu({ items }) {
           {items.map((it) => (
             <button
               key={it.label}
+              // preventDefault on mousedown keeps focus on the trigger, so the
+              // trigger's blur-close can't race/kill the item's click.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => { e.preventDefault(); setOpen(false); it.onClick(); }}
               className={`block w-full px-3 py-2 text-left text-xs hover:bg-bg-subtle/60 ${it.danger ? "text-red-600" : "text-text-main"}`}
             >
@@ -112,6 +115,26 @@ export default function CustomersPage() {
   const [newPub, setNewPub] = useState({ publicName: "", comboId: "", pricing: { input: "", output: "", cachedPct: "" } });
   const [editingPub, setEditingPub] = useState(null);
   const [pubBusy, setPubBusy] = useState(false);
+  // Token packages (katalog + assign)
+  const [packages, setPackages] = useState(null);
+  const [newPkg, setNewPkg] = useState({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "" });
+  const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgMsg, setPkgMsg] = useState(null);
+  const [assignModal, setAssignModal] = useState(null); // { packageId, packageName, customerId }
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [editingPkg, setEditingPkg] = useState(null); // { id, model, comboId }
+  // Admin history: paid topups + customers holding package instances
+  const [topupHistory, setTopupHistory] = useState(null);
+  const [pkgHolders, setPkgHolders] = useState(null);
+
+  const loadHistories = async () => {
+    const [tRes, iRes] = await Promise.all([
+      fetch("/api/admin/topups", { cache: "no-store" }),
+      fetch("/api/admin/packages/instances", { cache: "no-store" }),
+    ]);
+    if (tRes.ok) setTopupHistory((await tRes.json()).items || []);
+    if (iRes.ok) setPkgHolders((await iRes.json()).items || []);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +171,9 @@ export default function CustomersPage() {
           setPublicModels(pm.publicModels || []);
           setComboOptions(pm.combos || []);
         }
+        const pkRes = await fetch("/api/admin/packages", { cache: "no-store" });
+        if (pkRes.ok && !cancelled) setPackages((await pkRes.json()).packages || []);
+        if (!cancelled) await loadHistories();
       } catch (e) {
         if (!cancelled) setError(String(e?.message || e));
       }
@@ -386,6 +412,98 @@ export default function CustomersPage() {
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (e) {
       setError(String(e?.message || e));
+    }
+  };
+
+  // ── Token packages ──
+  const reloadPackages = async () => {
+    const res = await fetch("/api/admin/packages", { cache: "no-store" });
+    if (res.ok) setPackages((await res.json()).packages || []);
+  };
+
+  const createPkg = async () => {
+    setPkgBusy(true);
+    setPkgMsg(null);
+    try {
+      const models = newPkg.models.length ? newPkg.models : ["*"];
+      const res = await fetch("/api/admin/packages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newPkg.name.trim(),
+          tokens: Number(newPkg.tokens),
+          priceIdr: Number(newPkg.priceIdr) || 0,
+          models: models.length ? models : ["*"],
+          comboId: newPkg.comboId || null,
+          durationDays: Number(newPkg.durationDays) || 0,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setNewPkg({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "" });
+      setPkgMsg({ ok: true, text: "Package created" });
+      await reloadPackages();
+    } catch (e) {
+      setPkgMsg({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setPkgBusy(false);
+    }
+  };
+
+  const togglePkgActive = async (p) => {
+    setPkgBusy(true);
+    try {
+      await fetch(`/api/admin/packages/${p.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !p.active }),
+      });
+      await reloadPackages();
+    } finally {
+      setPkgBusy(false);
+    }
+  };
+
+  const submitAssign = async () => {
+    setAssignBusy(true);
+    try {
+      const res = await fetch(`/api/admin/packages/${assignModal.packageId}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: assignModal.customerId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setAssignModal(null);
+      setPkgMsg({ ok: true, text: "Package assigned" });
+    } catch (e) {
+      setPkgMsg({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setAssignBusy(false);
+    }
+  };
+
+  const savePkgModel = async () => {
+    setPkgBusy(true);
+    try {
+      const res = await fetch(`/api/admin/packages/${editingPkg.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          models: editingPkg.model.trim() ? [editingPkg.model.trim()] : ["*"],
+          comboId: editingPkg.comboId || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setEditingPkg(null);
+      await reloadPackages();
+    } catch (e) {
+      setPkgMsg({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setPkgBusy(false);
     }
   };
 
@@ -656,6 +774,134 @@ export default function CustomersPage() {
       </Card>
 
       <Card className="overflow-hidden">
+        <div className="p-4 border-b border-border bg-bg-subtle/50">
+          <h3 className="font-semibold">Token Packages</h3>
+          <p className="text-xs text-text-muted">
+            Quota-based packages. Usage against a covered model consumes package tokens instead of balance; other models bill balance as usual.
+          </p>
+        </div>
+        <div className="p-4 flex flex-col sm:flex-row flex-wrap gap-2 border-b border-border">
+          <input
+            type="text" placeholder="Package name (e.g. Paket Mini 50M)"
+            value={newPkg.name}
+            onChange={(e) => setNewPkg((s) => ({ ...s, name: e.target.value }))}
+            className="flex-1 min-w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
+            type="number" step="1" min="1" placeholder="Tokens (e.g. 50000000)"
+            value={newPkg.tokens}
+            onChange={(e) => setNewPkg((s) => ({ ...s, tokens: e.target.value }))}
+            className="w-44 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
+            type="number" step="1" min="0" placeholder="Price IDR (0 = assign only)"
+            value={newPkg.priceIdr}
+            onChange={(e) => setNewPkg((s) => ({ ...s, priceIdr: e.target.value }))}
+            className="w-44 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
+            type="text"
+            placeholder="Public model name (e.g. glm-5.3-flash)"
+            value={newPkg.models[0] || ""}
+            onChange={(e) => setNewPkg((s) => ({ ...s, models: e.target.value.trim() ? [e.target.value.trim()] : [] }))}
+            className="flex-1 min-w-44 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <select
+            value={newPkg.comboId}
+            onChange={(e) => setNewPkg((s) => ({ ...s, comboId: e.target.value }))}
+            className="flex-1 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          >
+            <option value="">Select combo…</option>
+            {comboOptions.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <input
+            type="number" step="1" min="0" placeholder="Duration days (0 = forever)"
+            value={newPkg.durationDays}
+            onChange={(e) => setNewPkg((s) => ({ ...s, durationDays: e.target.value }))}
+            className="w-40 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <button
+            onClick={createPkg}
+            disabled={pkgBusy || !newPkg.name.trim() || !Number(newPkg.tokens)}
+            className="rounded-md bg-primary px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Create
+          </button>
+        </div>
+        {pkgMsg && (
+          <div className={`px-4 py-2 text-xs ${pkgMsg.ok ? "text-green-600" : "text-red-500"}`}>{pkgMsg.text}</div>
+        )}
+        {packages && packages.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs uppercase text-text-muted bg-bg-subtle/50">
+                <tr>
+                  <th className="px-6 py-3">Name</th>
+                  <th className="px-6 py-3 text-right">Tokens</th>
+                  <th className="px-6 py-3 text-right">Price IDR</th>
+                  <th className="px-6 py-3">Models</th>
+                  <th className="px-6 py-3 text-right">Duration</th>
+                  <th className="px-6 py-3">Status</th>
+                  <th className="px-6 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {packages.map((p) => (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="px-6 py-3">{p.name}</td>
+                    <td className="px-6 py-3 text-right">{p.tokens.toLocaleString()}</td>
+                    <td className="px-6 py-3 text-right">Rp{p.priceIdr.toLocaleString()}</td>
+                    <td className="px-6 py-3 text-xs text-text-muted">
+                      {(() => {
+                        let models = p.models;
+                        try { models = JSON.parse(p.models); } catch { /* keep raw */ }
+                        const combo = p.comboId ? comboOptions.find((c) => c.id === p.comboId) : null;
+                        return (
+                          <div>
+                            <div>{(Array.isArray(models) ? models : [models]).join(", ") || "*"}</div>
+                            {combo && <div className="text-text-muted/70">via {combo.name}</div>}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-6 py-3 text-right">{p.durationDays ? `${p.durationDays}d` : "∞"}</td>
+                    <td className="px-6 py-3">
+                      <Badge variant={p.active ? "success" : "default"}>{p.active ? "active" : "inactive"}</Badge>
+                    </td>
+                    <td className="px-6 py-3">
+                      <ActionsMenu
+                        items={[
+                          {
+                            label: "Assign to customer",
+                            onClick: () => setAssignModal({ packageId: p.id, packageName: p.name, customerId: "" }),
+                          },
+                          {
+                            label: "Edit model",
+                            onClick: () => {
+                              let m = p.models;
+                              try { m = JSON.parse(p.models); } catch { /* keep raw */ }
+                              setEditingPkg({
+                                id: p.id,
+                                model: (Array.isArray(m) ? m[0] : m) || "",
+                                comboId: p.comboId || "",
+                              });
+                            },
+                          },
+                          { label: p.active ? "Deactivate" : "Activate", onClick: () => togglePkgActive(p) },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
           <div>
             <h3 className="font-semibold">Public Models (Combo Mapping)</h3>
@@ -884,6 +1130,93 @@ export default function CustomersPage() {
         )}
       </Card>
 
+      {/* Paid topup history — revenue view, pending/failed excluded */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
+          <h3 className="font-semibold">Top-up History (paid)</h3>
+          <button onClick={loadHistories} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-subtle">Refresh</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
+              <tr>
+                <th className="px-6 py-3">Time</th>
+                <th className="px-6 py-3">Customer</th>
+                <th className="px-6 py-3 text-right">Amount (IDR)</th>
+                <th className="px-6 py-3 text-right">Credited</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {!topupHistory ? (
+                <tr><td colSpan={4} className="px-6 py-6 text-center text-text-muted">Loading…</td></tr>
+              ) : topupHistory.length === 0 ? (
+                <tr><td colSpan={4} className="px-6 py-6 text-center text-text-muted">No paid top-ups yet.</td></tr>
+              ) : topupHistory.map((t) => (
+                <tr key={t.topupId} className="hover:bg-bg-subtle/20">
+                  <td className="px-6 py-3 text-text-muted whitespace-nowrap">{t.paidAt ? new Date(t.paidAt).toLocaleString() : "—"}</td>
+                  <td className="px-6 py-3">{t.customerLabel || t.customerId}</td>
+                  <td className="px-6 py-3 text-right tabular-nums">{Number(t.amountIdr).toLocaleString("id-ID")}</td>
+                  <td className="px-6 py-3 text-right tabular-nums">{t.creditedMicros == null ? "—" : fmtMoney(t.creditedMicros)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Package holders — every customer instance across statuses */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
+          <h3 className="font-semibold">Package Holders</h3>
+          <button onClick={loadHistories} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-subtle">Refresh</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
+              <tr>
+                <th className="px-6 py-3">Customer</th>
+                <th className="px-6 py-3">Package</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3 text-right">Used / Granted</th>
+                <th className="px-6 py-3 text-right">Remaining</th>
+                <th className="px-6 py-3">Expires</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {!pkgHolders ? (
+                <tr><td colSpan={6} className="px-6 py-6 text-center text-text-muted">Loading…</td></tr>
+              ) : pkgHolders.length === 0 ? (
+                <tr><td colSpan={6} className="px-6 py-6 text-center text-text-muted">No package instances yet.</td></tr>
+              ) : pkgHolders.map((i) => {
+                const pct = i.tokensGranted > 0 ? Math.round((i.tokensRemaining / i.tokensGranted) * 100) : 0;
+                return (
+                  <tr key={i.id} className="hover:bg-bg-subtle/20">
+                    <td className="px-6 py-3">
+                      <div>{i.customerLabel || i.customerId}</div>
+                      {i.customerLabel && i.customerEmail && i.customerLabel !== i.customerEmail && (
+                        <div className="text-[11px] text-text-muted">{i.customerEmail}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-3">{i.packageName || i.packageId}</td>
+                    <td className="px-6 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${
+                        i.status === "active" ? "bg-green-500/10 text-green-600"
+                        : i.status === "pending" ? "bg-yellow-500/10 text-yellow-600"
+                        : "bg-bg-subtle text-text-muted"}`}>
+                        {i.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-right tabular-nums">{i.tokensUsed.toLocaleString()} / {i.tokensGranted.toLocaleString()}</td>
+                    <td className="px-6 py-3 text-right tabular-nums">{i.tokensRemaining.toLocaleString()} ({pct}%)</td>
+                    <td className="px-6 py-3 text-text-muted whitespace-nowrap">{i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
           <h3 className="font-semibold">Tako Reconciliation</h3>
@@ -911,6 +1244,85 @@ export default function CustomersPage() {
           )}
         </div>
       </Card>
+
+      {/* Package assign modal */}
+      <Modal
+        isOpen={!!assignModal}
+        onClose={() => setAssignModal(null)}
+        title={`Assign Package — ${assignModal?.packageName || ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAssignModal(null)}>Cancel</Button>
+            <Button
+              onClick={submitAssign}
+              disabled={assignBusy || !assignModal?.customerId}
+            >
+              Assign
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-text-muted">Customer</span>
+            <select
+              value={assignModal?.customerId || ""}
+              onChange={(e) => setAssignModal((s) => ({ ...s, customerId: e.target.value }))}
+              className="rounded-md border border-border bg-bg-subtle px-3 py-2"
+            >
+              <option value="">Select customer…</option>
+              {(customers || []).filter((c) => c.status === "active").map((c) => (
+                <option key={c.id} value={c.id}>{c.name || c.email || c.id}</option>
+              ))}
+            </select>
+          </label>
+          <p className="text-xs text-text-muted">
+            The instance activates immediately with the catalog&apos;s token grant and duration.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Package model edit modal */}
+      <Modal
+        isOpen={!!editingPkg}
+        onClose={() => setEditingPkg(null)}
+        title="Edit Package Model"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditingPkg(null)}>Cancel</Button>
+            <Button onClick={savePkgModel} disabled={pkgBusy}>Save</Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-text-muted">Public model name</span>
+            <input
+              type="text"
+              placeholder='Public model name (e.g. glm-5.3-flash) — empty = all models'
+              value={editingPkg?.model || ""}
+              onChange={(e) => setEditingPkg((s) => ({ ...s, model: e.target.value }))}
+              className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-text-muted">Combo</span>
+            <select
+              value={editingPkg?.comboId || ""}
+              onChange={(e) => setEditingPkg((s) => ({ ...s, comboId: e.target.value }))}
+              className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+            >
+              <option value="">Select combo…</option>
+              {comboOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <p className="text-xs text-text-muted">
+            Billing scope follows the model name here; already-sold instances keep running on their own grant.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

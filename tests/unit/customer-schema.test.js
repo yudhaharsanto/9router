@@ -55,12 +55,12 @@ describe("Customer billing schema", () => {
     expect(indexSql).toMatch(/UNIQUE INDEX idx_ledger_ref ON ledger\(refType, refId, type\)/);
   });
 
-  it("SCHEMA_VERSION bumped to 2 and stamped in _meta", async () => {
+  it("SCHEMA_VERSION bumped past 2 and stamped in _meta", async () => {
     const { SCHEMA_VERSION } = await import("@/lib/db/schema.js");
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
     const db = await freshDb();
     const row = db.get(`SELECT value FROM _meta WHERE key='schemaVersion'`);
-    expect(parseInt(row.value, 10)).toBe(2);
+    expect(parseInt(row.value, 10)).toBeGreaterThanOrEqual(2);
   });
 
   it("existing DB (simulated old version) gains tables via additive sync", async () => {

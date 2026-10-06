@@ -94,5 +94,13 @@ export async function applyTopupCredit(takoTxnId) {
     meta: { takoTxnId, amountIdr: topup.amountIdr, rateMilli: topup.rateMilli },
   });
   await markTopupPaid(takoTxnId);
+  // Package purchase paid alongside: activate its pending instance. Best-effort
+  // — the balance credit above must not fail because of it.
+  try {
+    const { activateFromTopup } = await import("./packagesRepo.js");
+    await activateFromTopup(topup.id);
+  } catch (err) {
+    console.error(`[Topups] package activation failed for topup ${topup.id}:`, err?.message || err);
+  }
   return { credited: true, topup: await getTopupByTakoTxnId(takoTxnId) };
 }

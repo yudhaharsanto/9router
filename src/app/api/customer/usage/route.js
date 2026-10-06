@@ -38,6 +38,11 @@ export async function GET(request) {
   const url = new URL(request.url);
   const period = PERIODS[url.searchParams.get("period")] ? url.searchParams.get("period") : "all";
   const startDate = PERIODS[period]?.();
+  // billing=balance rows carry meta.holdRefId (ledger-joined), billing=package
+  // rows carry meta.publicModel (package model name); anything else only
+  // passes billing=all.
+  const billingParam = url.searchParams.get("billing");
+  const billing = billingParam === "balance" || billingParam === "package" ? billingParam : "all";
 
   // usageHistory stores the presented plaintext apiKey per request. Pull the
   // recent window raw, hash-match in memory against this customer's keyHash,
@@ -59,11 +64,22 @@ export async function GET(request) {
   // on it — the "cost" column is the official catalog estimate, not what the
   // customer was charged.
   const debitRows = db.all(
-    `SELECT refId, amountMicros FROM ledger
+    `SELECT refId, amountMicros, meta FROM ledger
       WHERE customerId = ? AND type = 'usage_debit' AND createdAt >= COALESCE(?, '1970-01-01')`,
     [session.customerId, startDate ? startDate.toISOString() : null]
-  );
+  ).map((d) => ({
+    refId: d.refId,
+    amountMicros: Number(d.amountMicros),
+    officialCostMicros: (() => { try { return JSON.parse(d.meta || "{}").officialCostMicros; } catch { return null; } })(),
+  }));
   const chargedByHoldRef = new Map(debitRows.map((d) => [d.refId, -Number(d.amountMicros)]));
+  // Official (pre-discount) price per request: the ledger debit's
+  // meta.officialCostMicros is what settleCustomerUsage computed from the
+  // public model's admin-entered official rates — the right "before discount"
+  // side. Falls back to the usageHistory catalog estimate when absent.
+  const officialByHoldRef = new Map(
+    debitRows.map((d) => [d.refId, Number(d.officialCostMicros) || null])
+  );
   const parseMeta = (raw) => {
     try { return JSON.parse(raw || "{}") || {}; } catch { return {}; }
   };
@@ -85,27 +101,37 @@ export async function GET(request) {
   const items = rows
     // Rows written without a presented key (admin/panel traffic) have NULL
     // apiKey and can never match a customer key — skip instead of crashing.
-    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash && (!publishedAnything || modelMap.get(r.model)))
+    // Package-billed rows carry meta.publicModel (the package's model name);
+    // they pass the publish filter and display under that name directly.
+    .filter((r) => r.apiKey && hashKey(r.apiKey) === keyHash && (!publishedAnything || modelMap.get(r.model) || parseMeta(r.meta).publicModel))
+    .filter((r) => {
+      if (billing === "balance") return !!parseMeta(r.meta).holdRefId;
+      if (billing === "package") return !!parseMeta(r.meta).publicModel && !parseMeta(r.meta).holdRefId;
+      return true;
+    })
     .slice(0, 100)
     .map((r) => ({
       timestamp: r.timestamp,
       provider: r.provider,
-      model: modelMap.get(r.model) || r.model,
+      model: parseMeta(r.meta).publicModel || modelMap.get(r.model) || r.model,
       promptTokens: r.promptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
       cachedTokens: (parseTokens(r.tokens).cached_tokens ?? parseTokens(r.tokens).cache_read_input_tokens ?? 0) || 0,
       cacheCreationTokens: parseTokens(r.tokens).cache_creation_input_tokens || 0,
       cost: r.cost,
       chargedMicros: chargedByHoldRef.get(parseMeta(r.meta).holdRefId) ?? null,
+      officialMicros: officialByHoldRef.get(parseMeta(r.meta).holdRefId) || Math.round((Number(r.cost) || 0) * 1_000_000) || null,
       status: r.status,
       mask: active.keyMask,
     }));
 
-  // Totals for the "official vs what you paid" view: official cost comes from
-  // the usage stats above; the actual charged amount is the customer's
-  // usage_debit ledger entries in the same window (integer micro-USD).
-  const officialMicros = Math.round(items.reduce((s, r) => s + (Number(r.cost) || 0) * 1_000_000, 0));
-  const chargedMicros = -debitRows.reduce((s, r) => s + Number(r.amountMicros), 0); // debits are negative
+  // Totals for the "official vs what you paid" view — computed from the same
+  // displayed items so the two sides can't drift apart. (The old version
+  // summed official cost over the ≤100 displayed rows but charged amount over
+  // every ledger debit in the window: with more than 100 requests, charged
+  // outgrew official and saved floored at 0 forever.)
+  const officialMicros = items.reduce((s, r) => s + (Number(r.officialMicros) || 0), 0);
+  const chargedMicros = items.reduce((s, r) => s + (r.chargedMicros ?? 0), 0);
   const totalRequests = items.length;
   const totalPromptTokens = items.reduce((s, r) => s + (Number(r.promptTokens) || 0), 0);
   const totalCompletionTokens = items.reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);

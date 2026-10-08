@@ -15,13 +15,14 @@ const migration = {
     const db = await getAdapter();
     const secret = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
     const rows = db.all(`SELECT id, apiKey FROM usageHistory WHERE apiKey IS NOT NULL AND keyHash IS NULL`);
-    const update = db.transaction(() => {
+    // Adapter contract: db.transaction(fn) executes fn immediately and
+    // returns its result — not better-sqlite3's deferred-call API.
+    db.transaction(() => {
       for (const r of rows) {
         const h = crypto.createHmac("sha256", secret).update(r.apiKey).digest("hex");
         db.run(`UPDATE usageHistory SET keyHash = ? WHERE id = ?`, [h, r.id]);
       }
     });
-    update();
   },
 };
 

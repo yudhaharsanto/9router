@@ -464,6 +464,21 @@ export default function CustomersPage() {
     }
   };
 
+  const deletePkg = async (p) => {
+    if (!confirm(`Delete package "${p.name}"? Refused while customers still hold active or pending instances.`)) return;
+    setPkgBusy(true);
+    try {
+      const res = await fetch(`/api/admin/packages/${p.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || "Delete failed");
+      }
+      await reloadPackages();
+    } finally {
+      setPkgBusy(false);
+    }
+  };
+
   const submitAssign = async () => {
     setAssignBusy(true);
     try {
@@ -890,6 +905,7 @@ export default function CustomersPage() {
                             },
                           },
                           { label: p.active ? "Deactivate" : "Activate", onClick: () => togglePkgActive(p) },
+                          { label: "Delete", onClick: () => deletePkg(p), danger: true },
                         ]}
                       />
                     </td>

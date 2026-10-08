@@ -108,6 +108,20 @@ export async function listPackages({ activeOnly = false } = {}) {
   return rows.map(rowToPackage);
 }
 
+// Hard delete from the catalog. Blocked while any live instance references it —
+// getActivePackages re-reads the catalog per instance, so a deleted package
+// would silently kill active instances mid-flight. Ended instances (expired/
+// revoked) don't block; they're just history.
+export async function deletePackage(id) {
+  const db = await getAdapter();
+  const live = db.get(
+    `SELECT COUNT(*) AS n FROM customerPackages WHERE packageId = ? AND status IN ('active', 'pending')`,
+    [id]
+  );
+  if (Number(live?.n) > 0) throw new Error("cannot delete: active or pending instances still reference this package — deactivate it instead");
+  db.run(`DELETE FROM tokenPackages WHERE id = ?`, [id]);
+}
+
 export async function getPackageById(id) {
   const db = await getAdapter();
   return rowToPackage(db.get(`SELECT * FROM tokenPackages WHERE id = ?`, [id]));

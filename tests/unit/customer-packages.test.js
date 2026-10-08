@@ -246,3 +246,25 @@ describe("packagesRepo — package covers its combo's public model name", () => 
     expect(actives.length).toBe(1);
   });
 });
+
+describe("packagesRepo — deletePackage", () => {
+  it("refuses delete while an active instance exists; deletes after instances end", async () => {
+    const p = await packages.createPackage({ ...PKG, name: "deletable" });
+    const c = await db.getOrCreateCustomer({ googleSub: "pkg-del-1" });
+    await packages.assignPackage(c.id, p.id);
+    await expect(packages.deletePackage(p.id)).rejects.toThrow(/active or pending/i);
+
+    // instance ends (revoked) → delete now succeeds
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    (await getAdapter()).run(`UPDATE customerPackages SET status = 'revoked' WHERE packageId = ?`, [p.id]);
+    await packages.deletePackage(p.id);
+    expect(await packages.getPackageById(p.id)).toBeNull();
+  });
+
+  it("refuses delete while a pending (paid-awaiting) instance exists", async () => {
+    const p = await packages.createPackage({ ...PKG, name: "deletable-pending" });
+    const c = await db.getOrCreateCustomer({ googleSub: "pkg-del-2" });
+    await packages.createPendingFromTopup({ customerId: c.id, packageId: p.id, topupId: `topup-del-${Date.now()}` });
+    await expect(packages.deletePackage(p.id)).rejects.toThrow(/active or pending/i);
+  });
+});

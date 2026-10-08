@@ -67,11 +67,6 @@ export {
   listTopups, markTopupPaid, applyTopupCredit, computeCreditedMicros,
 } from "./repos/topupsRepo.js";
 export {
-  createPackage, updatePackage, listPackages, getPackageById,
-  assignPackage, listCustomerPackages, getCustomerPackages, getActivePackages,
-  consumeTokens, createPendingFromTopup, activateFromTopup, computeExpiresAt,
-} from "./repos/packagesRepo.js";
-export {
   recordWebhookEvent, markWebhookProcessed, getUnprocessedWebhookEvents,
 } from "./repos/webhookEventsRepo.js";
 export {

@@ -16,8 +16,7 @@ import { getSettings } from "@/lib/localDb";
 import { isCustomerKey, authorizeCustomerRequest, holdForRequest } from "@/lib/billing/customerGate.js";
 import { evaluateMarginPolicy } from "@/lib/billing/marginGuard.js";
 import { releaseHold } from "@/lib/billing/customerGate.js";
-import { resolvePublicModelRequest, resolvePackageModel } from "@/lib/billing/publicModelMap.js";
-import { getActivePackages } from "@/lib/db/repos/packagesRepo.js";
+import { resolvePublicModelRequest } from "@/lib/billing/publicModelMap.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -118,7 +117,6 @@ function maskCustomerError(response, customerBilling) {
     // resolve to combos where per-member pricing differs — those skip the
     // guard here (combo members are checked at dispatch).
     const publicModel = await resolvePublicModelRequest(modelStr);
-    const packageModel = publicModel ? null : await resolvePackageModel(modelStr);
     if (publicModel) publicModelName = publicModel.publicName;
     const hold = await holdForRequest(auth.customerId, body, publicModelName);
     if (!hold.ok) {
@@ -136,9 +134,6 @@ function maskCustomerError(response, customerBilling) {
     }
     customerBilling = auth;
     customerBilling.holdRefId = hold.holdRefId;
-    // Package-billed requests carry no hold; the flag routes settle to
-    // consumeTokens instead of the balance ledger.
-    if (hold.packageBilling) customerBilling.packageBilling = true;
     if (publicModelName) customerBilling.publicName = publicModelName;
   } else if (settings.requireApiKey) {
     if (!apiKey) {
@@ -213,24 +208,8 @@ function maskCustomerError(response, customerBilling) {
     customerBilling.publicName = publicResolved.publicName;
   }
 
-  // Package model names: same combo routing as public models, but scoped to
-  // customers holding an active package instance that covers the name.
-  const pkgResolved = publicResolved ? null : await resolvePackageModel(modelStr);
-  if (pkgResolved) {
-    if (!customerBilling) {
-      log.warn("CHAT", `Package model "${modelStr}" used without a customer key`);
-      return errorResponse(HTTP_STATUS.FORBIDDEN, "This model requires a customer API key.");
-    }
-    const owned = await getActivePackages(customerBilling.customerId, modelStr);
-    if (!owned.length) {
-      log.warn("CHAT", `Package model "${modelStr}" used without an active package`);
-      return errorResponse(HTTP_STATUS.FORBIDDEN, "This model requires an active package.");
-    }
-    customerBilling.publicName = pkgResolved.publicName;
-  }
-
-  const comboModels = publicResolved || pkgResolved
-    ? (publicResolved || pkgResolved).models
+  const comboModels = publicResolved
+    ? publicResolved.models
     : await getComboModels(modelStr);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global

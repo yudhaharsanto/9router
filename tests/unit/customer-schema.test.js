@@ -43,9 +43,9 @@ describe("Customer billing schema", () => {
     const db = await freshDb();
     const sql = (name) =>
       db.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, [name])?.sql || "";
-    expect(sql("customers")).toMatch(/googleSub TEXT UNIQUE NOT NULL/);
-    expect(sql("customerKeys")).toMatch(/keyHash TEXT UNIQUE NOT NULL/);
-    expect(sql("topups")).toMatch(/takoTxnId TEXT UNIQUE/);
+    expect(sql("customers")).toMatch(/"?googleSub"? TEXT UNIQUE NOT NULL/);
+    expect(sql("customerKeys")).toMatch(/"?keyHash"? TEXT UNIQUE NOT NULL/);
+    expect(sql("topups")).toMatch(/"?takoTxnId"? TEXT UNIQUE/);
     // SQLite stores named unique indexes separately from CREATE TABLE.
     const indexSql = db
       .all(`SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL`)

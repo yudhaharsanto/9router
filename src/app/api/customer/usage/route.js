@@ -31,11 +31,10 @@ export async function GET(request) {
   const url = new URL(request.url);
   const period = PERIODS[url.searchParams.get("period")] ? url.searchParams.get("period") : "all";
   const startDate = PERIODS[period]?.();
-  // billing=balance rows carry meta.holdRefId (ledger-joined), billing=package
-  // rows carry meta.publicModel (package model name); anything else only
-  // passes billing=all.
+  // billing=balance rows carry meta.holdRefId (ledger-joined); anything else
+  // only passes billing=all.
   const billingParam = url.searchParams.get("billing");
-  const billing = billingParam === "balance" || billingParam === "package" ? billingParam : "all";
+  const billing = billingParam === "balance" ? billingParam : "all";
 
   // usageHistory carries keyHash (written at save time, backfilled by
   // migration 004) — the per-customer filter is an indexed lookup in SQL, no
@@ -89,19 +88,13 @@ export async function GET(request) {
     }
   }
   const items = rows
-    // Package-billed rows carry meta.publicModel (the package's model name);
-    // they pass the publish filter and display under that name directly.
-    .filter((r) => !publishedAnything || modelMap.get(r.model) || parseMeta(r.meta).publicModel)
-    .filter((r) => {
-      if (billing === "balance") return !!parseMeta(r.meta).holdRefId;
-      if (billing === "package") return !!parseMeta(r.meta).publicModel && !parseMeta(r.meta).holdRefId;
-      return true;
-    })
+    .filter((r) => !publishedAnything || modelMap.get(r.model))
+    .filter((r) => (billing === "balance" ? !!parseMeta(r.meta).holdRefId : true))
     .slice(0, 100)
     .map((r) => ({
       timestamp: r.timestamp,
       provider: r.provider,
-      model: parseMeta(r.meta).publicModel || modelMap.get(r.model) || r.model,
+      model: modelMap.get(r.model) || r.model,
       promptTokens: r.promptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
       cachedTokens: (parseTokens(r.tokens).cached_tokens ?? parseTokens(r.tokens).cache_read_input_tokens ?? 0) || 0,

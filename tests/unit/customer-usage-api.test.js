@@ -175,27 +175,25 @@ describe("GET /api/customer/usage", () => {
     expect(body.items[0].chargedMicros).toBe(10);
   });
 
-  it("billing filter splits balance rows (holdRefId) from package rows (publicModel)", async () => {
+  it("billing filter splits balance rows (holdRefId) from the rest", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "usg-billing" });
     const key = (await db.createCustomerKey(c.id)).key;
     const token = await sessionFor(c);
     // Earlier tests in this file publish public models, so this one must too
-    // (publishedAnything is file-global). Balance row: holdRefId meta. Package
-    // row: publicModel meta — passes the publish filter via its meta alone.
+    // (publishedAnything is file-global). Balance row: holdRefId meta.
     const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
     const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
     const combo = await createCombo({ name: `bal-combo-${Date.now()}`, kind: "fallback", models: ["m-bal"] });
     await upsertPublicModel({ publicName: "m-bal", comboId: combo.id, enabled: true });
     await db.saveRequestUsage({ provider: "p", model: "m-bal", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key, meta: { holdRefId: "req-bal" } });
-    await db.saveRequestUsage({ provider: "p", model: "m-pkg", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key, meta: { publicModel: "my-pkg-model" } });
+    await db.saveRequestUsage({ provider: "p", model: "m-plain", tokens: { prompt_tokens: 1, completion_tokens: 1 }, apiKey: key });
 
     const mod = await import("@/app/api/customer/usage/route.js");
     const bal = await (await mod.GET(req("/api/customer/usage?billing=balance", token))).json();
     expect(bal.items.map((i) => i.model)).toEqual(["m-bal"]);
-    const pkg = await (await mod.GET(req("/api/customer/usage?billing=package", token))).json();
-    expect(pkg.items.map((i) => i.model)).toEqual(["my-pkg-model"]);
+    // all: only the published row passes the publish filter (m-plain dropped)
     const all = await (await mod.GET(req("/api/customer/usage?billing=all", token))).json();
-    expect(all.items.length).toBe(2);
+    expect(all.items.length).toBe(1);
   });
 
   it("totals use the ledger's officialCostMicros (admin official price) when present", async () => {

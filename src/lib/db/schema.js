@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -304,56 +304,6 @@ export const TABLES = {
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
     },
-  },
-  tokenPackages: {
-    columns: {
-      id: "TEXT PRIMARY KEY",
-      name: "TEXT NOT NULL",
-      // Token quota granted on activation.
-      tokens: "INTEGER NOT NULL",
-      // IDR price for QRIS purchase; 0 = assign-only (admin grants free).
-      priceIdr: "INTEGER NOT NULL DEFAULT 0",
-      // JSON array of public model names this package covers; ["*"] = all.
-      models: "TEXT NOT NULL DEFAULT '[\"*\"]'",
-      // Variant group: variants of one package (same name, different tokens/
-      // price/duration) share a group label; NULL = standalone package.
-      group: "TEXT",
-      // Combo the package's public model resolves through (display/bookkeeping
-      // only — billing scope is the public model name itself).
-      comboId: "TEXT",
-      // Days of validity counted from activation; 0 = no expiry.
-      durationDays: "INTEGER NOT NULL DEFAULT 0",
-      // Catalog flag: inactive packages cannot be newly purchased/assigned;
-      // already-active customer instances keep running.
-      active: "INTEGER NOT NULL DEFAULT 1",
-      createdAt: "TEXT NOT NULL",
-      updatedAt: "TEXT NOT NULL",
-    },
-  },
-  customerPackages: {
-    columns: {
-      id: "TEXT PRIMARY KEY",
-      customerId: "TEXT NOT NULL",
-      packageId: "TEXT NOT NULL",
-      // Topup row that paid for this instance (QRIS purchases); NULL for
-      // admin-assigned. Unique → one pending instance per topup.
-      topupId: "TEXT UNIQUE",
-      // Snapshot of catalog tokens, written at activation.
-      tokensGranted: "INTEGER NOT NULL DEFAULT 0",
-      tokensUsed: "INTEGER NOT NULL DEFAULT 0",
-      // pending | active | expired | revoked
-      status: "TEXT NOT NULL DEFAULT 'pending'",
-      activatedAt: "TEXT",
-      // activatedAt + durationDays; NULL = no expiry.
-      expiresAt: "TEXT",
-      createdAt: "TEXT NOT NULL",
-      updatedAt: "TEXT NOT NULL",
-    },
-    indexes: [
-      "CREATE INDEX IF NOT EXISTS idx_cp_customer ON customerPackages(customerId, status)",
-      "CREATE INDEX IF NOT EXISTS idx_cp_package ON customerPackages(packageId)",
-      "CREATE INDEX IF NOT EXISTS idx_cp_topup ON customerPackages(topupId)",
-    ],
   },
 };
 

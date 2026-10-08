@@ -117,7 +117,7 @@ export default function CustomersPage() {
   const [pubBusy, setPubBusy] = useState(false);
   // Token packages (katalog + assign)
   const [packages, setPackages] = useState(null);
-  const [newPkg, setNewPkg] = useState({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "" });
+  const [newPkg, setNewPkg] = useState({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "", group: "" });
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgMsg, setPkgMsg] = useState(null);
   const [assignModal, setAssignModal] = useState(null); // { packageId, packageName, customerId }
@@ -436,11 +436,12 @@ export default function CustomersPage() {
           models: models.length ? models : ["*"],
           comboId: newPkg.comboId || null,
           durationDays: Number(newPkg.durationDays) || 0,
+          group: newPkg.group.trim() || null,
         }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      setNewPkg({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "" });
+      setNewPkg({ name: "", tokens: "", priceIdr: "", models: [], comboId: "", durationDays: "", group: "" });
       setPkgMsg({ ok: true, text: "Package created" });
       await reloadPackages();
     } catch (e) {
@@ -832,6 +833,13 @@ export default function CustomersPage() {
             ))}
           </select>
           <input
+            type="text"
+            placeholder="Group (variants share it, e.g. pkg/glm-5.3-flash)"
+            value={newPkg.group}
+            onChange={(e) => setNewPkg((s) => ({ ...s, group: e.target.value }))}
+            className="w-64 rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+          />
+          <input
             type="number" step="1" min="0" placeholder="Duration days (0 = forever)"
             value={newPkg.durationDays}
             onChange={(e) => setNewPkg((s) => ({ ...s, durationDays: e.target.value }))}
@@ -865,7 +873,10 @@ export default function CustomersPage() {
               <tbody>
                 {packages.map((p) => (
                   <tr key={p.id} className="border-t border-border">
-                    <td className="px-6 py-3">{p.name}</td>
+                    <td className="px-6 py-3">
+                      <div>{p.name}</div>
+                      {p.group && <div className="text-xs text-text-muted">{p.group}</div>}
+                    </td>
                     <td className="px-6 py-3 text-right">{p.tokens.toLocaleString()}</td>
                     <td className="px-6 py-3 text-right">Rp{p.priceIdr.toLocaleString()}</td>
                     <td className="px-6 py-3 text-xs text-text-muted">

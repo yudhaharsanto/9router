@@ -21,7 +21,7 @@ export async function GET(request) {
 export async function POST(request) {
   if (!(await requireAdmin(request))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await request.json().catch(() => ({}));
-  const { name, tokens, priceIdr, models, comboId, durationDays } = body || {};
+  const { name, tokens, priceIdr, models, comboId, durationDays, group } = body || {};
   if (!name || !Number.isInteger(Number(tokens)) || Number(tokens) <= 0) {
     return NextResponse.json({ error: "name and a positive integer tokens are required" }, { status: 400 });
   }
@@ -33,6 +33,7 @@ export async function POST(request) {
       models: Array.isArray(models) ? models.map(String) : ["*"],
       comboId: comboId ? String(comboId) : null,
       durationDays: Number(durationDays) || 0,
+      group: group ? String(group).slice(0, 200) : null,
     });
     return NextResponse.json({ package: pkg });
   } catch (err) {

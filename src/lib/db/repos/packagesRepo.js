@@ -19,6 +19,7 @@ function rowToPackage(row) {
     priceIdr: Number(row.priceIdr),
     models: row.models,
     comboId: row.comboId || null,
+    group: row.group || null,
     durationDays: Number(row.durationDays),
     active: !!Number(row.active),
     createdAt: row.createdAt,
@@ -58,7 +59,7 @@ export function normalizeModels(models) {
   return JSON.stringify(Array.isArray(models) && models.length ? models : ["*"]);
 }
 
-export async function createPackage({ name, tokens, priceIdr = 0, models = ["*"], comboId = null, durationDays = 0 }) {
+export async function createPackage({ name, tokens, priceIdr = 0, models = ["*"], comboId = null, durationDays = 0, group = null }) {
   if (!name || !Number.isInteger(tokens) || tokens <= 0) {
     throw new Error("package requires a name and a positive integer token amount");
   }
@@ -70,12 +71,13 @@ export async function createPackage({ name, tokens, priceIdr = 0, models = ["*"]
     models: normalizeModels(models),
     comboId: comboId || null,
     durationDays: Number(durationDays) || 0,
+    group: group || null,
     active: 1, createdAt: now, updatedAt: now,
   };
   db.run(
-    `INSERT INTO tokenPackages(id, name, tokens, priceIdr, models, comboId, durationDays, active, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [pkg.id, pkg.name, pkg.tokens, pkg.priceIdr, pkg.models, pkg.comboId, pkg.durationDays, pkg.active, pkg.createdAt, pkg.updatedAt]
+    `INSERT INTO tokenPackages(id, name, tokens, priceIdr, models, comboId, durationDays, "group", active, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [pkg.id, pkg.name, pkg.tokens, pkg.priceIdr, pkg.models, pkg.comboId, pkg.durationDays, pkg.group, pkg.active, pkg.createdAt, pkg.updatedAt]
   );
   return rowToPackage(pkg);
 }
@@ -84,12 +86,13 @@ export async function updatePackage(id, patch = {}) {
   const db = await getAdapter();
   const fields = [];
   const params = [];
-  for (const key of ["name", "tokens", "priceIdr", "models", "comboId", "durationDays", "active"]) {
+  for (const key of ["name", "tokens", "priceIdr", "models", "comboId", "durationDays", "group", "active"]) {
     if (key in patch) {
-      fields.push(`${key} = ?`);
+      fields.push(key === "group" ? '"group" = ?' : `${key} = ?`);
       let v = patch[key];
       if (key === "models") v = normalizeModels(v);
       if (key === "active") v = v ? 1 : 0;
+      if (key === "group") v = v || null;
       params.push(v);
     }
   }

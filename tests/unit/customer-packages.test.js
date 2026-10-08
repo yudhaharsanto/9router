@@ -268,3 +268,16 @@ describe("packagesRepo — deletePackage", () => {
     await expect(packages.deletePackage(p.id)).rejects.toThrow(/active or pending/i);
   });
 });
+
+describe("packagesRepo — group (variants)", () => {
+  it("round-trips group and lists it on catalog rows", async () => {
+    const a = await packages.createPackage({ ...PKG, name: "50M", group: "pkg/glm-5.3-flash" });
+    const b = await packages.createPackage({ ...PKG, name: "100M", group: "pkg/glm-5.3-flash", tokens: 100_000_000 });
+    const listed = await packages.listPackages();
+    const rows = listed.filter((p) => p.group === "pkg/glm-5.3-flash");
+    expect(rows.map((p) => p.name).sort()).toEqual(["100M", "50M"]);
+    expect(a.group).toBe("pkg/glm-5.3-flash");
+    // no group → null
+    expect(await packages.createPackage({ ...PKG, name: "solo" })).toMatchObject({ group: null });
+  });
+});

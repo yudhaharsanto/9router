@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -315,6 +315,9 @@ export const TABLES = {
       priceIdr: "INTEGER NOT NULL DEFAULT 0",
       // JSON array of public model names this package covers; ["*"] = all.
       models: "TEXT NOT NULL DEFAULT '[\"*\"]'",
+      // Variant group: variants of one package (same name, different tokens/
+      // price/duration) share a group label; NULL = standalone package.
+      group: "TEXT",
       // Combo the package's public model resolves through (display/bookkeeping
       // only — billing scope is the public model name itself).
       comboId: "TEXT",
@@ -355,7 +358,9 @@ export const TABLES = {
 };
 
 export function buildCreateTableSql(name, def) {
-  const cols = Object.entries(def.columns).map(([k, v]) => `${k} ${v}`);
+  // Quote column names — "group" is a SQLite reserved keyword and any future
+  // reserved-word column would otherwise produce a syntax error at CREATE time.
+  const cols = Object.entries(def.columns).map(([k, v]) => `"${k}" ${v}`);
   if (def.primaryKey) cols.push(def.primaryKey);
   return `CREATE TABLE IF NOT EXISTS ${name} (${cols.join(", ")})`;
 }

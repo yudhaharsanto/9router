@@ -1401,35 +1401,47 @@ function PackagesCard() {
             No packages available for purchase yet.
           </div>
         ) : (
-          catalog.map((p) => {
-            const scoped = p.models?.length > 0 && !p.models.includes("*");
+          // Variants sharing a group render as one card with a per-variant buy row;
+          // ungrouped packages stay one-card-per-package.
+          Object.entries(
+            catalog.reduce((acc, p) => {
+              const k = p.group || `__solo__${p.id}`;
+              (acc[k] ||= { group: p.group, items: [] }).items.push(p);
+              return acc;
+            }, {})
+          ).map(([key, { group, items }]) => {
+            const first = items[0];
+            const scoped = first.models?.length > 0 && !first.models.includes("*");
+            const label = group || first.name;
             return (
               <div
-                key={p.id}
-                className="rounded-[10px] border border-border-subtle bg-surface-2/40 p-4 flex items-center justify-between gap-3"
+                key={key}
+                className="rounded-[10px] border border-border-subtle bg-surface-2/40 p-4 flex flex-col gap-2"
               >
-                <div className="min-w-0 flex flex-col gap-1">
-                  <p className="font-semibold text-sm text-text-main">{p.name}</p>
-                  <p className="text-[11px] text-text-muted flex items-center gap-1.5 flex-wrap">
-                    <span className="tabular-nums">{fmtCompact(p.tokens)} tokens</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{p.durationDays ? `${p.durationDays} days` : "no expiry"}</span>
-                    {scoped && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <code className="font-mono truncate">{p.models.join(", ")}</code>
-                      </>
-                    )}
-                  </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-sm text-text-main">{label}</p>
+                  {scoped && (
+                    <code className="font-mono text-[11px] text-text-muted truncate">{first.models.join(", ")}</code>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-sm font-semibold tabular-nums text-text-main">
-                    Rp {fmtIdr(p.priceIdr)}
-                  </span>
-                  <Button size="sm" onClick={() => buy(p)} disabled={busyId === p.id || !!paying}>
-                    {busyId === p.id ? "…" : "Buy"}
-                  </Button>
-                </div>
+                {items.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] text-text-muted flex items-center gap-1.5 flex-wrap min-w-0">
+                      <span className="tabular-nums">{fmtCompact(p.tokens)} tokens</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{p.durationDays ? `${p.durationDays} days` : "no expiry"}</span>
+                    </p>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm font-semibold tabular-nums text-text-main">
+                        Rp {fmtIdr(p.priceIdr)}
+                      </span>
+                      {/* eslint-disable-next-line react-hooks/refs -- buy is a click handler; refs are touched on click, not render */}
+                      <Button size="sm" onClick={() => buy(p)} disabled={busyId === p.id || !!paying}>
+                        {busyId === p.id ? "…" : "Buy"}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             );
           })

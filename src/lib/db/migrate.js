@@ -93,7 +93,7 @@ function syncSchemaFromTables(adapter) {
           .replace(/UNIQUE/i, "")
           .trim();
         try {
-          adapter.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${safeDef}`);
+          adapter.exec(`ALTER TABLE ${tableName} ADD COLUMN "${colName}" ${safeDef}`);
           console.log(`[DB][sync] +column ${tableName}.${colName}`);
         } catch (e) {
           console.warn(`[DB][sync] add column ${tableName}.${colName} failed: ${e.message}`);

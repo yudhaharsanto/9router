@@ -16,7 +16,7 @@ export async function PATCH(request, { params }) {
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
   const patch = {};
-  for (const key of ["name", "tokens", "priceIdr", "models", "comboId", "durationDays", "active"]) {
+  for (const key of ["name", "tokens", "priceIdr", "models", "comboId", "durationDays", "group", "active"]) {
     if (key in body) patch[key] = body[key];
   }
   if ("name" in patch && !patch.name) return NextResponse.json({ error: "name cannot be empty" }, { status: 400 });

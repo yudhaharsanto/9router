@@ -118,7 +118,8 @@ describe("GET /api/customer/usage", () => {
     const hold = await ledger.holdReserve(c.id, 1_000_000, "req-t1");
     expect(hold.ok).toBe(true);
     // 10 in + 10 out at $1/$2 per 1M → official 30 µ$; charge 10 µ$ < official.
-    await ledger.settleUsage(c.id, "req-t1", 10, {});
+    // officialCostMicros mirrors customerGate.settleCustomerUsage (totals read it from the debit's meta).
+    await ledger.settleUsage(c.id, "req-t1", 10, { officialCostMicros: 30 });
 
     const mod = await import("@/app/api/customer/usage/route.js");
     const body = await (await mod.GET(req("/api/customer/usage", token))).json();

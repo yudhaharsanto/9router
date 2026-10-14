@@ -29,7 +29,10 @@ export async function GET(request) {
   if (!active) return NextResponse.json({ items: [] });
 
   const url = new URL(request.url);
-  const period = PERIODS[url.searchParams.get("period")] ? url.searchParams.get("period") : "all";
+  const periodParam = url.searchParams.get("period");
+  // hasOwnProperty guard: a bare lookup matches Object.prototype keys
+  // ("constructor" etc. are functions too) → startDate = {} → 500 on toISOString.
+  const period = Object.hasOwn(PERIODS, periodParam) ? periodParam : "all";
   const startDate = PERIODS[period]?.();
   // billing=balance rows carry meta.holdRefId (ledger-joined); anything else
   // only passes billing=all.
@@ -90,7 +93,7 @@ export async function GET(request) {
   const items = rows
     .filter((r) => !publishedAnything || modelMap.get(r.model))
     .filter((r) => (billing === "balance" ? !!parseMeta(r.meta).holdRefId : true))
-    .slice(0, 100)
+    .slice(0, 500)
     .map((r) => ({
       timestamp: r.timestamp,
       provider: r.provider,
@@ -106,16 +109,21 @@ export async function GET(request) {
       mask: active.keyMask,
     }));
 
-  // Totals for the "official vs what you paid" view — computed from the same
-  // displayed items so the two sides can't drift apart. (The old version
-  // summed official cost over the ≤100 displayed rows but charged amount over
-  // every ledger debit in the window: with more than 100 requests, charged
-  // outgrew official and saved floored at 0 forever.)
-  const officialMicros = items.reduce((s, r) => s + (Number(r.officialMicros) || 0), 0);
-  const chargedMicros = items.reduce((s, r) => s + (r.chargedMicros ?? 0), 0);
-  const totalRequests = items.length;
-  const totalPromptTokens = items.reduce((s, r) => s + (Number(r.promptTokens) || 0), 0);
-  const totalCompletionTokens = items.reduce((s, r) => s + (Number(r.completionTokens) || 0), 0);
+  // Totals over the whole period window, not just the rows shown in the list —
+  // the list caps at 500 rows but requests/tokens/charged must reflect the
+  // entire period (SQLite sums, no row iteration cost).
+  const agg = db.get(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(promptTokens),0) AS inT, COALESCE(SUM(completionTokens),0) AS outT
+     FROM usageHistory WHERE keyHash = ? AND timestamp >= COALESCE(?, '1970-01-01')`,
+    [active.keyHash, startDate ? startDate.toISOString() : null]
+  );
+  // Per-request charged/official still come from the debit join below, but over
+  // ALL debit rows in the window (not just displayed rows).
+  const officialMicros = debitRows.reduce((s, d) => s + (Number(d.officialCostMicros) || 0), 0);
+  const chargedMicros = debitRows.reduce((s, d) => s + -Number(d.amountMicros), 0);
+  const totalRequests = agg.n;
+  const totalPromptTokens = agg.inT;
+  const totalCompletionTokens = agg.outT;
   const totalCachedTokens = items.reduce((s, r) => s + (Number(r.cachedTokens) || 0), 0);
   const totalCacheCreationTokens = items.reduce((s, r) => s + (Number(r.cacheCreationTokens) || 0), 0);
   return NextResponse.json(

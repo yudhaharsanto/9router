@@ -59,7 +59,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
 
     expect(out.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
     expect(out.reasoning_effort).toBeUndefined();
-    expect(out.max_output_tokens).toBe(131072);
+    expect(out.max_output_tokens).toBe(65536); // PR #4786 clamps to 65536 (upstream rejects input+max > 1M)
     expect(out.max_tokens).toBeUndefined();
   });
 
@@ -127,7 +127,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
     });
 
     expect(out.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
-    expect(out.max_output_tokens).toBe(131072);
+    expect(out.max_output_tokens).toBe(65536); // PR #4786 clamps to 65536 (upstream rejects input+max > 1M)
     expect(out.max_tokens).toBeUndefined();
   });
 

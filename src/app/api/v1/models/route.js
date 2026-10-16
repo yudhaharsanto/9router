@@ -1,15 +1,15 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelKind } from "@/shared/constants/models";
-import { isCustomerKey } from "@/lib/billing/customerGate.js";
-import { customerModelsList } from "@/lib/billing/publicModelMap.js";
 import {
   ALIAS_TO_ID,
   AI_PROVIDERS,
+  FREE_PROVIDERS,
   getProviderAlias,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getApiKeyAllowedModels } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels, routableQoderModels } from "open-sse/services/qoderModels.js";
@@ -324,12 +324,10 @@ export async function buildModelsList(kindFilter, options = {}) {
   // cross-instance recursive loops.
   const skipDynamicFetch = options.skipDynamicFetch === true;
   let connections = [];
-  let dbOk = true;
   try {
     connections = await getProviderConnections();
     connections = connections.filter(c => c.isActive !== false);
   } catch (e) {
-    dbOk = false;
     console.log("Could not fetch providers, returning all models");
   }
 
@@ -369,6 +367,17 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
   }
 
+  // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
+  for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
+    if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
+      activeConnectionByProvider.set(id, {
+        id: "noauth",
+        provider: id,
+        isActive: true,
+      });
+    }
+  }
+
   const models = [];
   const combosByName = new Map(
     combos.filter((c) => typeof c?.name === "string").map((c) => [c.name, c]),
@@ -401,14 +410,14 @@ export async function buildModelsList(kindFilter, options = {}) {
     models.push(entry);
   }
 
-  if (!dbOk) {
+  if (connections.length === 0) {
     // DB unavailable -> return static models, filtered by per-model kind
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
-        if (isDisabled(alias, model.id)) continue;
+        if (isDisabled(alias, model.id) || isDisabled(providerId, model.id)) continue;
         models.push({
           id: `${alias}/${model.id}`,
           object: "model",
@@ -563,7 +572,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         // imageToText custom models stay in the LLM list (vision-capable chat models)
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
-        if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
+        if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId) || isDisabled(providerId, modelId)) continue;
 
         const model = {
           id: `${outputAlias}/${modelId}`,
@@ -655,41 +664,10 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-
-    // Customer keys (sk-cust-) see only enabled public models — combo IDs and
-    // provider names never leave the server (spec §3.6).
-    const authHeader = request?.headers?.get("Authorization");
-    const rawApiKey = authHeader?.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : request?.headers?.get("x-api-key");
-    if (isCustomerKey(rawApiKey)) {
-      const data = await customerModelsList();
-      return Response.json({ object: "list", data }, {
-        headers: { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" },
-      });
-    }
-
-    let data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
-
-    // If the request carries an API key with an allow-list, filter the catalog
-    // to that key's available models (alias-aware: alias and target are equivalent).
-    try {
-      const apiKey = rawApiKey;
-      if (apiKey) {
-        const allowed = await getApiKeyAllowedModels(apiKey);
-        if (allowed.length) {
-          const aliases = (await getModelAliases()) || {};
-          const expanded = new Set(allowed);
-          for (const a of allowed) if (aliases[a]) expanded.add(String(aliases[a]));
-          data = data.filter((m) => {
-            if (expanded.has(m.id)) return true;
-            const resolved = aliases[m.id] ? String(aliases[m.id]) : null;
-            return resolved ? expanded.has(resolved) : false;
-          });
-        }
-      }
-    } catch { /* fail open: return full catalog on any error */ }
-
+    const data = await filterModelsListForKey(
+      await getKeyAccessContext(request),
+      await buildModelsList([LLM_KIND], { skipDynamicFetch })
+    );
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

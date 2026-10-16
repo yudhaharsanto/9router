@@ -33,6 +33,22 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
+
+// Customer traffic must never see internal provider/member model names in
+// error responses. Preserve status and retry headers, but hide upstream details.
+function customerSafeError(customerBilling) {
+  if (!customerBilling) return null;
+  return `Model ${customerBilling.publicName || "you requested"} is temporarily unavailable. Please retry.`;
+}
+
+function maskCustomerError(response, customerBilling) {
+  if (!customerBilling || !response || response.status < 400) return response;
+  return new Response(
+    JSON.stringify({ error: { message: customerSafeError(customerBilling) } }),
+    { status: response.status, headers: response.headers }
+  );
+}
 
 /**
  * Handle chat completion request
@@ -57,30 +73,14 @@ export async function handleChat(request, clientRawRequest = null) {
       headers: Object.fromEntries(request.headers.entries())
     };
   }
-  // Customer traffic must never see internal provider/member model names in
-// error responses — success responses are already masked (response.model =
-// publicName); errors go generic here. Status code and retry-after headers
-// still carry the actionable info; upstream detail stays in admin logs.
-function customerSafeError(customerBilling) {
-  if (!customerBilling) return null;
-  return `Model ${customerBilling.publicName || "you requested"} is temporarily unavailable. Please retry.`;
-}
-
-// Replace a failed response's body with the customer-safe message; status
-// and headers (incl. retry-after) pass through untouched.
-function maskCustomerError(response, customerBilling) {
-  if (!customerBilling || !response || response.status < 400) return response;
-  return new Response(
-    JSON.stringify({ error: { message: customerSafeError(customerBilling) } }),
-    { status: response.status, headers: response.headers }
-  );
-}
-
-// Claude Code marks a 1M-context request as `<model>[1m]`; the marker matches
+  // Claude Code marks a 1M-context request as `<model>[1m]`; the marker matches
   // no combo, alias or provider/model pair, so it must not reach resolution.
   // The capability travels in the anthropic-beta header, forwarded as-is.
   const { model: modelStr, contextMarker } = stripModelContextMarker(body.model);
   if (contextMarker) body.model = modelStr;
+
+  const keyAccessDenied = await enforceKeyAccess(await getKeyAccessContext(request), modelStr);
+  if (keyAccessDenied) return keyAccessDenied;
 
   // Request summary is emitted as the unified "▶" line in chatCore (has fmt/thinking/account)
 

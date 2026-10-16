@@ -1,6 +1,8 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
+import { validateKeyAccessInput, keyAccessFromColumns, keyAccessToColumns } from "@/shared/utils/keyAccess.js";
+import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
 
 // Settings
 export {
@@ -29,7 +31,7 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
   getApiKeyUsedTokens, getApiKeyLimitStatus, resetApiKeyLimit, getUsageByKeyName, getApiKeyAllowedModels, getApiKeyRpmLimit,
 } from "./repos/apiKeysRepo.js";
 
@@ -104,7 +106,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, tokenLimit: Number(r.tokenLimit) || 0, limitWindow: r.limitWindow || "monthly", rpmLimit: Number(r.rpmLimit) || 0, limitResetAt: r.limitResetAt || null, allowedModels: parseJson(r.allowedModels, []), access: keyAccessFromColumns(r.accessRestricted, r.accessAllow), createdAt: r.createdAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -179,9 +181,19 @@ export async function importDb(payload) {
       );
     }
     for (const k of payload.apiKeys || []) {
+      let keyAccess = KEY_ACCESS_UNRESTRICTED;
+      if (k.access !== undefined) {
+        const checked = validateKeyAccessInput(k.access);
+        if (!checked.ok) throw new Error(`apiKeys ${k.id}: ${checked.error}`);
+        keyAccess = checked.value;
+      }
+      const access = keyAccessToColumns(keyAccess);
+      const allowedModels = Array.isArray(k.allowedModels)
+        ? k.allowedModels.filter((m) => typeof m === "string" && m.trim())
+        : [];
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, tokenLimit, limitWindow, rpmLimit, limitResetAt, allowedModels, accessRestricted, accessAllow, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, Math.max(0, Number(k.tokenLimit) || 0), k.limitWindow || "monthly", Math.max(0, Number(k.rpmLimit) || 0), k.limitResetAt || null, JSON.stringify(allowedModels), access.accessRestricted, access.accessAllow, k.createdAt || new Date().toISOString()]
       );
     }
     for (const c of payload.combos || []) {

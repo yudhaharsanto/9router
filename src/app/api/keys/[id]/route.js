@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -35,6 +36,11 @@ export async function PUT(request, { params }) {
     if (body.limitWindow !== undefined) updateData.limitWindow = body.limitWindow;
     if (body.rpmLimit !== undefined) updateData.rpmLimit = body.rpmLimit;
     if (body.allowedModels !== undefined) updateData.allowedModels = body.allowedModels;
+    if (body.access !== undefined) {
+      const access = validateKeyAccessInput(body.access);
+      if (!access.ok) return NextResponse.json({ error: access.error }, { status: 400 });
+      updateData.access = access.value;
+    }
 
     const updated = await updateApiKey(id, updateData);
 

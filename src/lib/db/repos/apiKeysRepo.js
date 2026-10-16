@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { keyAccessFromColumns, keyAccessToColumns, validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
+import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
 
 const VALID_WINDOWS = ["total", "daily", "monthly"];
 
@@ -32,6 +34,7 @@ function rowToKey(row) {
     rpmLimit: Number(row.rpmLimit) || 0,
     limitResetAt: row.limitResetAt || null,
     allowedModels: parseAllowedModels(row.allowedModels),
+    access: keyAccessFromColumns(row.accessRestricted, row.accessAllow),
     createdAt: row.createdAt,
   };
 }
@@ -45,6 +48,13 @@ export async function getApiKeys() {
 export async function getApiKeyById(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
+  return rowToKey(row);
+}
+
+export async function getApiKeyByKey(key) {
+  if (!key) return null;
+  const db = await getAdapter();
+  const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
   return rowToKey(row);
 }
 
@@ -69,10 +79,12 @@ export async function createApiKey(name, machineId, options = {}) {
     limitWindow,
     rpmLimit,
     allowedModels,
+    access: KEY_ACCESS_UNRESTRICTED,
     createdAt: new Date().toISOString(),
   };
+  const access = keyAccessToColumns(apiKey.access);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, tokenLimit, limitWindow, rpmLimit, allowedModels, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, tokenLimit, limitWindow, rpmLimit, allowedModels, accessRestricted, accessAllow, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       apiKey.id,
       apiKey.key,
@@ -83,6 +95,8 @@ export async function createApiKey(name, machineId, options = {}) {
       limitWindow,
       rpmLimit,
       JSON.stringify(allowedModels),
+      access.accessRestricted,
+      access.accessAllow,
       apiKey.createdAt,
     ],
   );
@@ -102,8 +116,12 @@ export async function updateApiKey(id, data) {
     merged.allowedModels = Array.isArray(merged.allowedModels)
       ? merged.allowedModels.filter((m) => typeof m === "string" && m.trim())
       : [];
+    const checkedAccess = validateKeyAccessInput(merged.access);
+    if (!checkedAccess.ok) throw new Error(checkedAccess.error);
+    merged.access = checkedAccess.value;
+    const access = keyAccessToColumns(merged.access);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, tokenLimit = ?, limitWindow = ?, rpmLimit = ?, allowedModels = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, tokenLimit = ?, limitWindow = ?, rpmLimit = ?, allowedModels = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -113,6 +131,8 @@ export async function updateApiKey(id, data) {
         merged.limitWindow,
         merged.rpmLimit,
         JSON.stringify(merged.allowedModels),
+        access.accessRestricted,
+        access.accessAllow,
         id,
       ],
     );

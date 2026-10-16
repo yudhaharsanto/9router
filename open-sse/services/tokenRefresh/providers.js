@@ -706,143 +706,148 @@ export async function refreshWindsurfToken(credentials, log) {
   return null;
 }
 
-/**
- * AutoClaw token refresh.
- *
- * Uses the app-signing header contract (X-Auth-Appid / X-Auth-TimeStamp / X-Auth-Sign
- * = md5(`${APP_ID}&${ts}&${APP_KEY}`)) and POSTs { source_id, device_id, refresh_token }
- * to /userapi/v1/refresh. The response is a { code, msg, data } envelope where data
- * holds { access_token, refresh_token }. access_token is a JWT (TTL 24h) whose payload
- * carries the authoritative device_id used for subsequent refreshes.
- *
- * source_id is stored at login time (providerSpecificData.sourceId) and defaults to
- * "autoclaw" — the spec notes an underspecified variant ("autoclawaccess_token") but
- * the verified working value for /refresh is "autoclaw".
- */
-export async function refreshAutoClawToken(
-  refreshToken,
-  providerSpecificData,
-  log,
-  proxyOptions = null,
-) {
-  if (!refreshToken) return null;
-  return dedupRefresh(
-    "autoclaw",
-    refreshToken,
-    async () => {
-      const oauth = PROVIDER_OAUTH["autoclaw"] || {};
-      const appId = oauth.appId || "100003";
-      const appKey = oauth.appKey || "38d2391985e2369a5fb8227d8e6cd5e5";
-      const refreshUrl =
-        oauth.refreshUrl || "https://autoglm-api.autoglm.ai/userapi/v1/refresh";
-      const sourceId =
-        providerSpecificData?.sourceId || oauth.sourceId || "autoclaw";
-      const deviceId = providerSpecificData?.deviceId;
+// ── MiniMax Code (mcode) ─────────────────────────────────────────────────────
+// MiniMax refresh tokens are SINGLE-USE: sending the same one twice answers
+// invalid_grant (HTTP 400) and signs the account out. Two paths reach refresh
+// (background scheduler + executor's on-401 retry) and may hold different
+// snapshots of one connection, so dedupRefresh keys on the spent token value —
+// a token already sent resolves to the cached result instead of a second send.
+// An invalid_grant is the ONLY answer that means the sign-in is gone; anything
+// else (5xx, timeout) returns null and the current access token stays usable.
+const MINIMAX_CODE_SITES = {
+  "minimax-code": "https://account.minimax.cn/oauth2/token",
+  "minimax-code-global": "https://account.minimax.io/oauth2/token",
+};
 
-      if (!deviceId) {
-        log?.error?.(
-          "TOKEN_REFRESH",
-          "AutoClaw refresh requires deviceId in providerSpecificData",
-        );
-        return null;
-      }
-
-      const ts = String(Math.floor(Date.now() / 1000));
-      const sign = crypto
-        .createHash("md5")
-        .update(`${appId}&${ts}&${appKey}`)
-        .digest("hex");
-      const headers = {
-        "X-Auth-Appid": appId,
-        "X-Auth-TimeStamp": ts,
-        "X-Auth-Sign": sign,
-        "X-Product": "autoclaw",
-        "X-Version": "1.9.1",
-        "X-Tm": "win",
-        "X-Trace-Id": crypto.randomUUID(),
-        "Content-Type": "application/json",
-      };
-
-      const response = await proxyAwareFetch(
-        refreshUrl,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            source_id: sourceId,
-            device_id: deviceId,
-            refresh_token: refreshToken,
-          }),
+export async function refreshMiniMaxCodeToken(provider, refreshToken, log) {
+  const tokenUrl = MINIMAX_CODE_SITES[provider];
+  if (!tokenUrl || !refreshToken) return null;
+  return dedupRefresh(provider, refreshToken, async () => {
+    try {
+      const response = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
         },
-        proxyOptions,
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        log?.error?.("TOKEN_REFRESH", "Failed to refresh AutoClaw token", {
-          status: response.status,
-          error: errorText,
-        });
-        return null;
-      }
-
-      const resp = await response.json();
-      // { code, msg, data } envelope — code 0 / null means success.
-      if (resp.code != null && resp.code !== 0) {
-        log?.error?.("TOKEN_REFRESH", "AutoClaw refresh API error", {
-          code: resp.code,
-          msg: resp.msg,
-        });
-        return null;
-      }
-      const data = resp.data || {};
-      let at = data.access_token || "";
-      let rt = data.refresh_token || refreshToken;
-      if (at.startsWith("Bearer ")) at = at.slice(7);
-      if (rt.startsWith("Bearer ")) rt = rt.slice(7);
-      if (!at) {
-        log?.error?.(
-          "TOKEN_REFRESH",
-          "AutoClaw refresh response missing access_token",
-          { data },
-        );
-        return null;
-      }
-
-      // Decode JWT exp (no verification) for refresh-lead scheduling.
-      const exp = decodeJwtExp(at);
-      log?.info?.("TOKEN_REFRESH", "Successfully refreshed AutoClaw token", {
-        hasNewAccessToken: !!at,
-        hasNewRefreshToken: rt !== refreshToken,
-        exp: exp ? new Date(exp * 1000).toISOString() : null,
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: "mcode-public",
+          scope: "agent.default",
+          audience: "agent-backend",
+        }).toString(),
+        signal: AbortSignal.timeout(30000),
       });
-
+      const data = await response.json().catch(() => null);
+      if (!response.ok || (data && typeof data.error === "string" && data.error)) {
+        const code = data?.error || `HTTP ${response.status}`;
+        if (response.status === 400 && data?.error === "invalid_grant") {
+          log?.warn?.("TOKEN_REFRESH", `MiniMax refresh token spent/rejected (${provider}) — sign-in gone`);
+          return { error: "invalid_grant" };
+        }
+        log?.error?.("TOKEN_REFRESH", `MiniMax token refresh failed (${provider})`, { status: response.status, error: code });
+        return null;
+      }
+      if (!data?.access_token) {
+        log?.error?.("TOKEN_REFRESH", `MiniMax refresh returned no access_token (${provider})`);
+        return null;
+      }
       return {
-        accessToken: at,
-        refreshToken: rt,
-        expiresIn: exp
-          ? Math.max(1, exp - Math.floor(Date.now() / 1000))
-          : 86400,
-        providerSpecificData: { sourceId, deviceId },
+        accessToken: data.access_token,
+        // MiniMax rotates the refresh token on every refresh; keep the old one
+        // only if the answer oddly omits it.
+        refreshToken: data.refresh_token || refreshToken,
+        expiresIn: data.expires_in,
       };
-    },
-    log,
-  );
+    } catch (error) {
+      log?.error?.("TOKEN_REFRESH", `Error refreshing MiniMax token (${provider}): ${error.message}`);
+      return null;
+    }
+  }, log);
 }
 
-/** Decode JWT payload exp (no verification). Returns seconds since epoch or null. */
-function decodeJwtExp(token) {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const json = JSON.parse(
-      Buffer.from(
-        payload + "=".repeat(-payload.length % 4),
-        "base64url",
-      ).toString("utf8"),
-    );
-    return typeof json.exp === "number" ? json.exp : null;
-  } catch {
-    return null;
-  }
+// ── Nous Research Portal (hermes-cli) ────────────────────────────────────────
+// Flow: refresh_token → new access_token → mint fresh agent_key.
+export async function refreshNousToken(refreshToken, log) {
+  if (!refreshToken) return null;
+  return dedupRefresh("nous", refreshToken, async () => {
+    try {
+      const tokenResponse = await fetch("https://portal.nousresearch.com/api/oauth/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "x-nous-refresh-token": refreshToken,
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: "hermes-cli",
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!tokenResponse.ok) {
+        const error = await tokenResponse.text().catch(() => "");
+        log?.error?.("TOKEN_REFRESH", "Failed to refresh Nous token", {
+          status: tokenResponse.status,
+          error,
+        });
+        return null;
+      }
+
+      const tokenData = await tokenResponse.json();
+      if (!tokenData?.access_token) {
+        log?.error?.("TOKEN_REFRESH", "Nous token refresh returned no access_token");
+        return null;
+      }
+
+      let agentKey = null;
+      let agentKeyId = null;
+      let agentKeyExpiresAt = null;
+      try {
+        const agentKeyResponse = await fetch("https://portal.nousresearch.com/api/oauth/agent-key", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${tokenData.access_token}`,
+          },
+          body: JSON.stringify({
+            min_ttl_seconds: 7200,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (agentKeyResponse.ok) {
+          const agentKeyData = await agentKeyResponse.json();
+          agentKey = agentKeyData.api_key || null;
+          agentKeyId = agentKeyData.key_id || null;
+          agentKeyExpiresAt = agentKeyData.expires_at || null;
+          log?.info?.("TOKEN_REFRESH", "Nous agent key minted successfully");
+        } else {
+          const error = await agentKeyResponse.text().catch(() => "");
+          log?.warn?.("TOKEN_REFRESH", "Failed to mint Nous agent key, falling back to access_token", { error });
+        }
+      } catch (mintErr) {
+        log?.warn?.("TOKEN_REFRESH", `Nous agent key mint error: ${mintErr?.message || mintErr}`);
+      }
+
+      return {
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token || refreshToken,
+        expiresIn: tokenData.expires_in,
+        apiKey: agentKey || tokenData.access_token,
+        agentKey,
+        providerSpecificData: {
+          ...(agentKeyId ? { agentKeyId } : {}),
+          ...(agentKeyExpiresAt ? { agentKeyExpiresAt } : {}),
+        },
+      };
+    } catch (error) {
+      log?.error?.("TOKEN_REFRESH", `Error refreshing Nous token: ${error.message}`);
+      return null;
+    }
+  }, log);
 }

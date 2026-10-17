@@ -1,3 +1,8 @@
+# Unreleased
+
+## Fixes
+- **OpenCode Free**: honor the `low|high|max` reasoning efforts of `oc/deepseek-v4.1-flash-free` — the generic DeepSeek level set no longer advertises medium/xhigh, and `low` now reaches the upstream verbatim instead of collapsing to `high`
+
 # v0.5.104 (2026-10-15)
 
 ## Features

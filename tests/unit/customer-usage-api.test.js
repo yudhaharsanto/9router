@@ -239,6 +239,112 @@ describe("GET /api/customer/usage", () => {
     expect(body.totals.officialMicros).toBe(0);
     expect(body.totals.savedMicros).toBe(0);
   });
+
+  it("returns only the previous calendar day for the yesterday period", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-yesterday" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: `yesterday-combo-${Date.now()}`, kind: "fallback", models: ["yesterday-member"] });
+    await upsertPublicModel({ publicName: "yesterday-public", comboId: combo.id, enabled: true });
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const yesterday = new Date(todayStart);
+    yesterday.setDate(yesterday.getDate() - 1);
+    await db.saveRequestUsage({
+      provider: "p",
+      model: "yesterday-member",
+      timestamp: new Date(yesterday.getTime() + 12 * 3600000).toISOString(),
+      tokens: { prompt_tokens: 1, completion_tokens: 1 },
+      apiKey: key,
+    });
+    await db.saveRequestUsage({
+      provider: "p",
+      model: "yesterday-member",
+      timestamp: new Date(todayStart.getTime() + 12 * 3600000).toISOString(),
+      tokens: { prompt_tokens: 2, completion_tokens: 2 },
+      apiKey: key,
+    });
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage?period=yesterday", token))).json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].promptTokens).toBe(1);
+    expect(body.totals.totalRequests).toBe(1);
+  });
+
+  it("includes a debit settled after midnight for the previous-day request", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-yesterday-settle" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const holdRefId = "yesterday-cross-midnight";
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: `yesterday-settle-combo-${Date.now()}`, kind: "fallback", models: ["yesterday-settle-member"] });
+    await upsertPublicModel({ publicName: "yesterday-settle-public", comboId: combo.id, enabled: true });
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const yesterdayNoon = new Date(todayStart);
+    yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
+    yesterdayNoon.setHours(12, 0, 0, 0);
+    await db.saveRequestUsage({
+      provider: "p",
+      model: "yesterday-settle-member",
+      timestamp: yesterdayNoon.toISOString(),
+      tokens: { prompt_tokens: 1, completion_tokens: 1 },
+      apiKey: key,
+      meta: { holdRefId },
+    });
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    await ledger.creditCustomer(c.id, 1_000_000, { refType: "test", refId: "seed-cross-midnight" });
+    await ledger.holdReserve(c.id, 100_000, holdRefId);
+    await ledger.settleUsage(c.id, holdRefId, 10, { officialCostMicros: 20 });
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    (await getAdapter()).run(
+      "UPDATE ledger SET createdAt = ? WHERE customerId = ? AND refId = ? AND type = 'usage_debit'",
+      [new Date(todayStart.getTime() + 3600000).toISOString(), c.id, holdRefId],
+    );
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage?period=yesterday", token))).json();
+    expect(body.items[0].chargedMicros).toBe(10);
+    expect(body.totals.chargedMicros).toBe(10);
+
+    const today = await (await mod.GET(req("/api/customer/usage?period=today", token))).json();
+    expect(today.totals.chargedMicros).toBe(0);
+  });
+
+  it("limits rows to the latest 10 while totals cover the full period", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "usg-cap" });
+    const key = (await db.createCustomerKey(c.id)).key;
+    const token = await sessionFor(c);
+    const { upsertPublicModel } = await import("@/lib/db/repos/publicModelsRepo.js");
+    const { createCombo } = await import("@/lib/db/repos/combosRepo.js");
+    const combo = await createCombo({ name: `cap-combo-${Date.now()}`, kind: "fallback", models: ["usage-cap-member"] });
+    await upsertPublicModel({ publicName: "usage-cap-public", comboId: combo.id, enabled: true });
+
+    for (let i = 0; i < 12; i++) {
+      await db.saveRequestUsage({
+        provider: "p",
+        model: "usage-cap-member",
+        timestamp: new Date(Date.now() - i * 1000).toISOString(),
+        tokens: { prompt_tokens: i + 1, completion_tokens: i + 2, cached_tokens: i + 3 },
+        apiKey: key,
+      });
+    }
+
+    const mod = await import("@/app/api/customer/usage/route.js");
+    const body = await (await mod.GET(req("/api/customer/usage?period=all", token))).json();
+    expect(body.items).toHaveLength(10);
+    expect(body.items[0].model).toBe("usage-cap-public");
+    expect(body.totals.totalRequests).toBe(12);
+    expect(body.totals.totalPromptTokens).toBe(78);
+    expect(body.totals.totalCompletionTokens).toBe(90);
+    expect(body.totals.totalCachedTokens).toBe(102);
+  });
 });
 
 describe("GET /api/customer/ledger", () => {

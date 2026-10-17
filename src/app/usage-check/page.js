@@ -30,6 +30,7 @@ function fmtMoney(micros) {
 }
 
 const USAGE_PERIODS = [
+  { value: "yesterday", label: "Yesterday" },
   { value: "today", label: "Today" },
   { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
@@ -954,8 +955,9 @@ function UsageCard() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             <StatTile label="Requests" value={String(totals.totalRequests ?? items.length)} tone="brand" />
+            <StatTile label="Total Tokens" value={fmtCompact((totals.totalPromptTokens || 0) + (totals.totalCompletionTokens || 0))} hint="tokens" tone="brand" />
             <StatTile label="Input" value={fmtCompact(totals.totalPromptTokens || 0)} hint="tokens" tone="info" />
             <StatTile label="Output" value={fmtCompact(totals.totalCompletionTokens || 0)} hint="tokens" tone="success" />
             <StatTile label="Cached" value={fmtCompact(totals.totalCachedTokens || 0)} hint={totals.totalCacheCreationTokens > 0 ? `+${fmtCompact(totals.totalCacheCreationTokens)} write` : "tokens"} tone="warning" />
@@ -966,7 +968,7 @@ function UsageCard() {
             ))}
           </div>
           <p className="text-[11px] text-text-muted">
-            {items.length} request{items.length === 1 ? "" : "s"} in this period. Older rows show the estimated catalog price.
+            Showing the latest {items.length} requests in this period. Older rows show the estimated catalog price.
           </p>
         </>
       )}

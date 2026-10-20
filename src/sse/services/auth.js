@@ -126,15 +126,39 @@ export async function getProviderCredentials(
       let pickedId = override.proxyPoolId || null;
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
-        const poolIds = allPools.filter((p) => p.proxyUrl).map((p) => p.id);
+        const poolIds = allPools
+          .filter((p) => p.proxyUrl)
+          .map((p) => p.id)
+          .filter((id) => !excludeSet.has(`proxy:${id}`) && !excludeSet.has(id));
+        if (poolIds.length === 0) {
+          log.warn(
+            "AUTH",
+            `${provider} | all proxy pools exhausted (${excludeSet.size} excluded)`,
+          );
+          return null;
+        }
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+      } else if (
+        pickedId &&
+        (excludeSet.has(`proxy:${pickedId}`) || excludeSet.has(pickedId))
+      ) {
+        log.warn("AUTH", `${provider} | configured proxy pool ${pickedId} excluded`);
+        return null;
       }
       const resolvedProxy = await resolveConnectionProxyConfig({
         proxyPoolId: pickedId || "",
       });
+      // Tag the virtual connection with the pool so the account loop can exclude
+      // the pool that just failed instead of retrying the same egress. Plain
+      // "noauth" only when no pool is configured at all.
+      const connectionId = pickedId ? `proxy:${pickedId}` : "noauth";
+      const connectionName = pickedId
+        ? resolvedProxy.proxyPool?.name || `Proxy (${pickedId.slice(0, 8)})`
+        : "Public";
       return {
-        id: "noauth",
-        connectionName: "Public",
+        id: connectionId,
+        connectionId,
+        connectionName,
         isActive: true,
         accessToken: "public",
         providerSpecificData: {
@@ -378,6 +402,17 @@ export async function markAccountUnavailable(
 ) {
   if (!connectionId || connectionId === "noauth")
     return { shouldFallback: false, cooldownMs: 0 };
+  // Proxy-backed no-auth connections are virtual (no DB row): judge them by the
+  // same error rules as real accounts so the loop rotates to the next pool.
+  if (connectionId.startsWith("proxy:")) {
+    const { shouldFallback, cooldownMs } = checkFallbackError(
+      status,
+      errorText,
+      0,
+      provider,
+    );
+    return { shouldFallback, cooldownMs };
+  }
   const connections = await getProviderConnections({ provider });
   const conn = connections.find((c) => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;

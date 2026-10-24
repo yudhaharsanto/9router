@@ -14,7 +14,6 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { isCustomerKey, authorizeCustomerRequest, holdForRequest } from "@/lib/billing/customerGate.js";
-import { evaluateMarginPolicy } from "@/lib/billing/marginGuard.js";
 import { releaseHold } from "@/lib/billing/customerGate.js";
 import { resolvePublicModelRequest } from "@/lib/billing/publicModelMap.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -81,7 +80,8 @@ export async function handleChat(request, clientRawRequest = null) {
   const { model: modelStr, contextMarker } = stripModelContextMarker(body.model);
   if (contextMarker) body.model = modelStr;
 
-  const keyAccessDenied = await enforceKeyAccess(await getKeyAccessContext(request), modelStr);
+  const keyAccess = await getKeyAccessContext(request);
+  const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
   if (keyAccessDenied) return keyAccessDenied;
   const session = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
   const sessionId = session?.sessionId || null;
@@ -101,44 +101,44 @@ export async function handleChat(request, clientRawRequest = null) {
   // Enforce API key if enabled in settings
   const settings = await getSettings();
 
+  // Validate the target before any billing work: an empty model must not take a
+  // balance hold (nothing can release it once we 400 out).
+  if (!modelStr) {
+    log.warn("CHAT", "Missing model");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
   // Customer billing gate (spec §3.8) — sk-cust- keys never hit the admin-key
   // path: they authorize against the customer ledger and hold a balance
   // reserve before any upstream call. Insufficient balance → 402, no fallback.
   let customerBilling = null;
   let publicModelName = null;
+  let resolvedPublicModel = null;
   if (isCustomerKey(apiKey)) {
     const auth = await authorizeCustomerRequest(apiKey);
     if (!auth) {
       log.warn("AUTH", "Invalid customer API key");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
-    // Margin guard (spec §3.10): check before any upstream call. Public-name
-    // requests resolve to combos below, where per-member pricing differs —
-    // those skip the guard here (combo members are checked at dispatch).
     // Public-name resolution first: reserve is priced off the public model's
-    // direct sell price when it has one, else the requested model. Margin
-    // guard (spec §3.10) runs before any upstream call; public-name requests
-    // resolve to combos where per-member pricing differs — those skip the
-    // guard here (combo members are checked at dispatch).
+    // direct sell price. Customers address models by public name only (spec
+    // §3.6) — a provider/model string must never be routable with a sk-cust-
+    // key: it exposes the upstream catalog and, when unpriced, bills nothing.
     const publicModel = await resolvePublicModelRequest(modelStr);
-    if (publicModel) publicModelName = publicModel.publicName;
+    if (!publicModel) {
+      log.warn("AUTH", `Customer key requested a non-public model "${modelStr}"`);
+      return errorResponse(HTTP_STATUS.FORBIDDEN, "Model not available for this API key.");
+    }
+    publicModelName = publicModel.publicName;
     const hold = await holdForRequest(auth.customerId, body, publicModelName);
     if (!hold.ok) {
       log.warn("AUTH", `Insufficient balance for customer ${auth.customerId}`);
       return errorResponse(HTTP_STATUS.PAYMENT_REQUIRED, "Insufficient balance. Please top up.");
     }
-    if (!publicModel) {
-      const verdict = await evaluateMarginPolicy("openai", modelStr, body);
-      if (verdict.blocked) {
-        await releaseHold(auth.customerId, hold.holdRefId);
-        log.warn("AUTH", `Margin guard blocked request (model ${modelStr})`);
-        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Model temporarily unavailable.");
-      }
-      if (verdict.unsafe) log.warn("MARGIN", `Margin-unsafe request (model ${modelStr}) — proceeding per policy`);
-    }
     customerBilling = auth;
     customerBilling.holdRefId = hold.holdRefId;
-    if (publicModelName) customerBilling.publicName = publicModelName;
+    customerBilling.publicName = publicModelName;
+    resolvedPublicModel = publicModel;
   } else if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
@@ -173,11 +173,6 @@ export async function handleChat(request, clientRawRequest = null) {
     }
   }
 
-  if (!modelStr) {
-    log.warn("CHAT", "Missing model");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
-  }
-
   // Enforce per-key model allow-list (if configured); customer keys have no
   // admin key allow-list (public model mapping comes in phase 6).
   if (apiKey && !customerBilling) {
@@ -194,23 +189,19 @@ export async function handleChat(request, clientRawRequest = null) {
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
-  if (bypassResponse) return bypassResponse.response || bypassResponse;
+  if (bypassResponse) {
+    // The balance hold is already taken; nothing is dispatched, so give it back.
+    if (customerBilling?.holdRefId) {
+      await releaseHold(customerBilling.customerId, customerBilling.holdRefId).catch(() => {});
+    }
+    return bypassResponse.response || bypassResponse;
+  }
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
-  // Public model mapping (phase 6): a customer-facing public name resolves to
-  // its combo members here; the public name rides customerBilling for
-  // response masking. Falls through to normal combo/name resolution otherwise.
-  // Check if model is a combo (has multiple models with fallback). A public
-  // name resolved in the gate block above wins; its members are the combo.
-  const publicResolved = publicModelName ? await resolvePublicModelRequest(modelStr) : null;
-  if (publicResolved) {
-    if (!customerBilling) {
-      log.warn("CHAT", `Public model "${modelStr}" used without a customer key`);
-      return errorResponse(HTTP_STATUS.FORBIDDEN, "This model requires a customer API key.");
-    }
-    customerBilling.publicName = publicResolved.publicName;
-  }
+  // Public model mapping (phase 6): resolved once in the gate above; its combo
+  // members are the model list and its name rides customerBilling for masking.
+  const publicResolved = resolvedPublicModel;
 
   const comboModels = publicResolved
     ? publicResolved.models
@@ -220,7 +211,7 @@ export async function handleChat(request, clientRawRequest = null) {
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings);
+    const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings), comboModels);
     const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
 
     if (comboStrategy === "fusion") {
@@ -274,7 +265,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Single model request — may still switch to a capacity-adapter model if the
   // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const soloAugmented = augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
+  const soloAugmented = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings), [modelStr]);
   if (soloAugmented.length > 1) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
@@ -310,7 +301,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
       const requiredCapabilities = detectRequiredCapabilities(body);
-      const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, chatSettings);
+      // Nested combo (a combo member that is itself a combo): the access decision
+      // was made on the outer target; only drop adapter models the key may not call.
+      const keyAccess = await getKeyAccessContext(request);
+      const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, chatSettings), comboModels);
       const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
 
       if (comboStrategy === "fusion") {

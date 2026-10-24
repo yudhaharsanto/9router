@@ -26,11 +26,27 @@ const SPECIALIZED = new Set([
 // Per-process / per-request values: kimi's random device name, minimax's session UUID.
 const VOLATILE_HEADERS = new Set(["x-msh-device-name", "x-mavis-session-id"]);
 
+// Machine/build-dependent values: pin them so the snapshot is identical on any
+// host (darwin vs linux, timezone, 9router version bump).
+const NORMALIZED_HEADERS = {
+  "user-agent": (v) => v.replace(/9Router\/[\d.]+/, "9Router/<VER>"),
+  "x-client-version": () => "<VER>",
+  "x-core-version": () => "<VER>",
+  "x-msh-version": () => "<VER>",
+  "x-platform": () => "<PLATFORM>",
+  "x-platform-version": () => "<NODEVER>",
+  "x-msh-device-model": () => "<OSTYPE>",
+  "x-mavis-timezone-offset": () => "<TZ>",
+};
+
 // Sanitize header: khử token + field thời gian động (kimi X-Msh-Device-Id) để snapshot ổn định.
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
-    if (VOLATILE_HEADERS.has(k.toLowerCase())) { out[k] = "<VOLATILE>"; continue; }
+    const lower = k.toLowerCase();
+    if (VOLATILE_HEADERS.has(lower)) { out[k] = "<VOLATILE>"; continue; }
+    const normalize = NORMALIZED_HEADERS[lower];
+    if (normalize && typeof v === "string") { out[k] = normalize(v); continue; }
     out[k] = typeof v === "string"
       ? v.replace(/Bearer .+/, "Bearer <TOK>")
           .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")

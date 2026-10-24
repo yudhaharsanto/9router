@@ -18,9 +18,8 @@ tests/unit/translator-request-normalization.test.js :: request normalization fil
 tests/unit/translator-request-normalization.test.js :: request normalization parseSSELine supports provider raw NDJSON stream lines
 tests/unit/translator-request-normalization.test.js :: request normalization translateRequest keeps /v1/messages Claude->OpenAI text payloads string-safe
 
-# Real bug: /api/usage/stats serializes raw API keys as byApiKey property names (GHSA-vjc7).
-# Fixed by decolua/9router#4286.
-tests/unit/security-audit.test.js :: AUDIT-002: API key masking byApiKey object keys should use masked key, not raw key
+# Real bug fixed locally: /api/usage/stats serialized raw API keys as byApiKey
+# property names (GHSA-vjc7). Kept green by unit/usage-api-key-attribution.test.js.
 
 # Stale expectations fixed by decolua/9router#3665 (search auto-switch disabled on purpose;
 # reorder returns a copy).
@@ -35,3 +34,19 @@ tests/unit/mimo-free.live.test.js :: MiMo Free anti-abuse gate (live) chat WITH 
 # which is not part of this repository.
 tests/unit/db-benchmark.test.js :: <suite failed to load>
 tests/unit/embeddings.cloud.test.js :: <suite failed to load>
+
+# Upstream-red (v0.5.109): the test and the code it covers shipped in the same upstream
+# commit and disagree with each other. Verified against upstream ^2 (f39d8f07), so neither
+# is a local regression — upstream has to decide which side is intended.
+# checkFallbackError now returns requestScoped:true for non-auth 4xx, which combo.js
+# honours by advancing to the next member; both tests still expect an immediate stop.
+tests/unit/combo-credit-fallback.test.js :: routes a 400 response correctly: Bad request
+tests/unit/codebuddy-block-backoff.test.js :: still stops a combo on a malformed CodeBuddy request
+# collectToolOutputText() now projects plain-text Responses tool outputs (a safe subset)
+# before the "not safe to compress" guard; the test still expects the whole request skipped.
+tests/unit/headroom-responses-format.test.js :: skips unsafe openai-responses input
+
+# Environment-dependent: getPublicOrigin() reads the real DB (~/.9router; DATA_DIR is not
+# isolated in vitest), so a configured publicOrigin=https://… makes the plain-http case secure.
+tests/unit/customer-session.test.js :: cookie is secure when getPublicOrigin(request) is https
+

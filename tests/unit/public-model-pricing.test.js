@@ -61,6 +61,22 @@ describe("public model pricing", () => {
     expect(await cp.getPublicSellPricing("no-such-public")).toBeNull();
   });
 
+  it("holdForRequest reserves at the public sell rate, not a hardcoded provider row", async () => {
+    const repo = await import("@/lib/db/repos/pricingRepo.js");
+    const customers = await import("@/lib/db/repos/customersRepo.js");
+    const ledger = await import("@/lib/db/repos/ledgerRepo.js");
+    const gate = await import("@/lib/billing/customerGate.js");
+
+    // Official output 8, discount 0.5 → sell 4/1M → 1000 tokens reserve 4000 µ$.
+    await repo.updatePublicPricing({ "reserve-model": { input: 2, output: 8 } });
+    const c = await customers.getOrCreateCustomer({ googleSub: "pp-reserve" });
+    await ledger.creditCustomer(c.id, 100_000_000, { refType: "test", refId: "pp-r1" });
+
+    const hold = await gate.holdForRequest(c.id, { model: "reserve-model", max_tokens: 1000 }, "reserve-model");
+    expect(hold.ok).toBe(true);
+    expect((await ledger.getBalance(c.id)).reservedMicros).toBe(4_000);
+  });
+
   it("settleCustomerUsage bills public models at official × (1 − discount)", async () => {
     const repo = await import("@/lib/db/repos/pricingRepo.js");
     const customers = await import("@/lib/db/repos/customersRepo.js");

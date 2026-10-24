@@ -100,6 +100,22 @@ describe("ledgerRepo — holds and settle", () => {
     expect(next.ok).toBe(false);
   });
 
+  it("settleUsage is idempotent per refId — a released-then-settled combo member charges once", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "led-14" });
+    await db.creditCustomer(c.id, USD(10), { refType: "topup", refId: "t-14" });
+    // Another in-flight request holds its own reserve; it must survive untouched.
+    await db.holdReserve(c.id, USD(2), "req-14-other");
+    await db.holdReserve(c.id, USD(3), "req-14a");
+    await db.settleUsage(c.id, "req-14a", 0); // member failed → release
+    const r = await db.settleUsage(c.id, "req-14a", USD(1)); // next member served
+    expect(r.balanceMicros).toBe(USD(9));
+    expect(r.reservedMicros).toBe(USD(2)); // other request's hold not eaten
+    const debits = (await db.getLedger(c.id)).filter(
+      (x) => x.type === "usage_debit" && x.refId === "req-14a"
+    );
+    expect(debits).toHaveLength(1);
+  });
+
   it("settleUsage refuses a hold belonging to another customer", async () => {
     const a = await db.getOrCreateCustomer({ googleSub: "led-12" });
     const b = await db.getOrCreateCustomer({ googleSub: "led-13" });

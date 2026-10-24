@@ -25,6 +25,8 @@ const nextConfig = {
   // @aws-sdk/credential-providers must stay external for the same class of reason: it reads
   // ~/.aws/config and the SSO token cache from disk at runtime and resolves its credential
   // plugins by dynamic require, neither of which survives bundling.
+  // wreq-js resolves its rust native binding by relative require paths from its own
+  // package dir — bundling breaks those paths ("Failed to load native module").
   serverExternalPackages: [
     "better-sqlite3",
     "sql.js",
@@ -35,6 +37,7 @@ const nextConfig = {
     "playwright-core",
     "camoufox-js",
     "@aws-sdk/credential-providers",
+    "wreq-js",
   ],
   turbopack: {
     root: tracingRoot,

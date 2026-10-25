@@ -3,6 +3,7 @@ import {
   ALIAS_TO_ID,
   AI_PROVIDERS,
   FREE_PROVIDERS,
+  REGISTRY_CATALOG_PROVIDERS,
   getProviderAlias,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
@@ -206,14 +207,20 @@ async function fetchCompatibleModelIds(connection) {
     ? connection.providerSpecificData.baseUrl.trim().replace(/\/$/, "")
     : "";
 
-  if (!baseUrl) return [];
+  // Registry providers with a fixed catalog (Inferhub) never store a baseUrl on
+  // UI-created connections; resolve their endpoint from the registry instead.
+  const catalogUrl = REGISTRY_CATALOG_PROVIDERS.has(connection.provider)
+    ? AI_PROVIDERS[connection.provider]?.modelsFetcher?.url || ""
+    : "";
 
-  let url = `${baseUrl}/models`;
+  if (!catalogUrl && !baseUrl) return [];
+
+  let url = catalogUrl || `${baseUrl.replace(/\/(?:chat\/completions|responses|messages)$/, "")}/models`;
   const headers = {
     "Content-Type": "application/json",
   };
 
-  if (isOpenAICompatibleProvider(connection.provider)) {
+  if (isOpenAICompatibleProvider(connection.provider) || REGISTRY_CATALOG_PROVIDERS.has(connection.provider)) {
     headers.Authorization = `Bearer ${connection.apiKey}`;
   } else if (isAnthropicCompatibleProvider(connection.provider)) {
     if (url.endsWith("/messages/models")) {
@@ -455,8 +462,8 @@ export async function buildModelsList(kindFilter, options = {}) {
       ).trim();
       const providerModels = PROVIDER_MODELS[staticAlias] || [];
       const enabledModels = conn?.providerSpecificData?.enabledModels;
-      const hasExplicitEnabledModels =
-        Array.isArray(enabledModels) && enabledModels.length > 0;
+      const hasExplicitEnabledModels = Array.isArray(enabledModels)
+        && enabledModels.some((modelId) => typeof modelId === "string" && modelId.trim() !== "");
       const isCompatibleProvider =
         isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
 
@@ -477,8 +484,8 @@ export async function buildModelsList(kindFilter, options = {}) {
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
-        rawModelIds = await fetchCompatibleModelIds(conn);
+      if (!skipDynamicFetch && !hasExplicitEnabledModels && ((isCompatibleProvider && rawModelIds.length === 0) || REGISTRY_CATALOG_PROVIDERS.has(providerId))) {
+        rawModelIds = Array.from(new Set([...rawModelIds, ...await fetchCompatibleModelIds(conn)]));
       }
 
       // Config-driven live catalog override (e.g. Kiro returns dynamic

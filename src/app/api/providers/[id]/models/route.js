@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, REGISTRY_CATALOG_PROVIDERS } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
@@ -553,12 +553,17 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 
-    if (isOpenAICompatibleProvider(connection.provider)) {
+    if (isOpenAICompatibleProvider(connection.provider) || REGISTRY_CATALOG_PROVIDERS.has(connection.provider)) {
       const baseUrl = connection.providerSpecificData?.baseUrl;
-      if (!baseUrl) {
+      // Registry providers with a fixed catalog have no baseUrl on UI-created
+      // connections; use the registry endpoint rather than user-editable data.
+      const catalogUrl = REGISTRY_CATALOG_PROVIDERS.has(connection.provider)
+        ? AI_PROVIDERS[connection.provider]?.modelsFetcher?.url || ""
+        : "";
+      if (!catalogUrl && !baseUrl) {
         return NextResponse.json({ error: "No base URL configured for OpenAI compatible provider" }, { status: 400 });
       }
-      const url = `${baseUrl.replace(/\/$/, "")}/models`;
+      const url = catalogUrl || `${baseUrl.replace(/\/(?:chat\/completions|responses|messages)\/?$/, "").replace(/\/$/, "")}/models`;
       const response = await fetch(url, {
         method: "GET",
         headers: {

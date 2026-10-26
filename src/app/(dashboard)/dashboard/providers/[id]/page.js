@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
 import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, ZedAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
-import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
+import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, REGISTRY_CATALOG_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -160,7 +160,12 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = (providerId === "cursor" || providerId === "zed") && liveModels.length > 0
+  // Registry providers with a fixed catalog (Inferhub) resolve theirs through the
+  // authenticated provider route, same as cursor/zed — their static registry list
+  // only carries seeded media ids, which the LLM section filters out.
+  const isRegistryCatalog = REGISTRY_CATALOG_PROVIDERS.has(providerId);
+  const usesLiveCatalog = providerId === "cursor" || providerId === "zed" || isRegistryCatalog;
+  const models = usesLiveCatalog && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -483,7 +488,11 @@ export default function ProviderDetailPage() {
   // the provider id or connection list changes — no polling, no loop.
   // Cursor path is statement-identical to before; zed adds error surfacing.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed";
+    // Registry catalog providers (Inferhub) use the same authenticated route:
+    // their catalog endpoint needs the stored key, unlike the public ones.
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || REGISTRY_CATALOG_PROVIDERS.has(providerId);
+    // Only these surface a fetch failure; cursor keeps its silent fallback.
+    const surfacesLiveError = providerId === "zed" || REGISTRY_CATALOG_PROVIDERS.has(providerId);
     if (!isLiveCatalog) {
       setLiveModels([]);
       return;
@@ -492,30 +501,30 @@ export default function ProviderDetailPage() {
     const connection = connections.find((item) => item.isActive !== false);
     if (!connection?.id) {
       setLiveModels([]);
-      if (providerId === "zed") setLiveModelsError(null);
+      if (surfacesLiveError) setLiveModelsError(null);
       return;
     }
 
     let cancelled = false;
-    if (providerId === "zed") setLiveModelsError(null);
+    if (surfacesLiveError) setLiveModelsError(null);
     fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
         if (cancelled) return;
         if (ok && Array.isArray(data?.models) && data.models.length > 0) {
           setLiveModels(data.models);
-          if (providerId === "zed" && data?.warning) setLiveModelsError(data.warning);
+          if (surfacesLiveError && data?.warning) setLiveModelsError(data.warning);
           return;
         }
-        if (providerId === "zed") {
+        if (surfacesLiveError) {
           setLiveModels([]);
-          setLiveModelsError(data?.warning || data?.error || "Zed returned no live models.");
+          setLiveModelsError(data?.warning || data?.error || `${providerId} returned no live models.`);
         }
       })
       .catch(() => {
-        if (!cancelled && providerId === "zed") {
+        if (!cancelled && surfacesLiveError) {
           setLiveModels([]);
-          setLiveModelsError("Failed to reach the Zed model catalog.");
+          setLiveModelsError(`Failed to reach the ${providerId} model catalog.`);
         }
       });
 
@@ -525,7 +534,9 @@ export default function ProviderDetailPage() {
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
     const fetcher = (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId])?.modelsFetcher;
-    if (!fetcher) return;
+    // The suggested-models proxy sends no credentials, so an auth-gated catalog
+    // (Inferhub) always 401s there; the live-catalog effect above covers it.
+    if (!fetcher || REGISTRY_CATALOG_PROVIDERS.has(providerId)) return;
     fetchSuggestedModels(fetcher).then(setSuggestedModels);
   }, [providerId]);
 
@@ -1835,7 +1846,7 @@ export default function ProviderDetailPage() {
             })()}
           </div>
         )}
-        {providerId === "zed" && !!liveModelsError && (
+        {(providerId === "zed" || isRegistryCatalog) && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}

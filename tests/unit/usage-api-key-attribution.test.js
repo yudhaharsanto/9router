@@ -53,5 +53,20 @@ describe("Usage stats API key attribution", () => {
         .map((entry) => entry.promptTokens)
         .sort((a, b) => a - b)
     ).toEqual([10, 20]);
+
+    // AUDIT-002: the bucket keys are serialized to the client — never the raw key.
+    for (const key of Object.keys(stats.byApiKey)) {
+      expect(key).not.toContain(apiKeyA);
+      expect(key).not.toContain(apiKeyB);
+      expect(key.startsWith("sk-machi***")).toBe(true);
+    }
+
+    // Same rule on the daily-rollup period, whose stored bucket keys are raw.
+    const daily = await db.getUsageStats("7d");
+    expect(Object.values(daily.byApiKey)).toHaveLength(2);
+    for (const key of Object.keys(daily.byApiKey)) {
+      expect(key).not.toContain(apiKeyA);
+      expect(key).not.toContain(apiKeyB);
+    }
   });
 });

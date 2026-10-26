@@ -69,6 +69,32 @@ describe("/v1/models combo limits", () => {
     });
   });
 
+  it("fetches Inferhub's live catalog for a connection without a baseUrl", async () => {
+    db.getProviderConnections.mockResolvedValue([{
+      id: "inferhub-connection",
+      provider: "inferhub",
+      apiKey: "test-key",
+      isActive: true,
+    }]);
+    db.getCombos.mockResolvedValue([]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ id: "ocg/glm-5.2", name: "GLM 5.2" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    try {
+      const ids = (await buildModelsList(["llm", "image"])).map((model) => model.id);
+      expect(ids).toContain("ih/ocg/glm-5.2");
+      // The seeded media models must survive the merge with the live catalog.
+      expect(ids).toContain("ih/leo/phoenix-v1.0");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://api.inferhub.dev/v1/models",
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer test-key" }) }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("publishes Devin CLI's 200k limit for a dv combo seat", async () => {
     const models = await modelsWithCombo("devin-cli", "gpt-5.5-high", [
       { name: "devin-combo", models: ["dv/gpt-5.5-high"] },

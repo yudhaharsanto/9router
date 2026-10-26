@@ -88,6 +88,11 @@ export const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 export const ANTHROPIC_COMPATIBLE_PREFIX = "anthropic-compatible-";
 export const CUSTOM_EMBEDDING_PREFIX = "custom-embedding-";
 
+// Registry providers whose model catalog lives at a fixed `modelsFetcher.url`.
+// Their connections never store providerSpecificData.baseUrl, so discovery must
+// read the endpoint from the registry, never from user-editable connection data.
+export const REGISTRY_CATALOG_PROVIDERS = new Set(["inferhub"]);
+
 export function isOpenAICompatibleProvider(providerId) {
   return typeof providerId === "string" && providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
 }

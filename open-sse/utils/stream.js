@@ -310,7 +310,11 @@ export function createSSEStream(options = {}) {
 
               // Public model masking (spec 3.6): only re-serialized chunks carry
               // the rewritten name; untouched lines keep their raw bytes.
-              if (maskModel && parsed && typeof parsed === "object") parsed.model = maskModel;
+              if (maskModel && parsed && typeof parsed === "object") {
+                parsed.model = maskModel;
+                output = `data: ${JSON.stringify(parsed)}\n`;
+                injectedUsage = true;
+              }
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {

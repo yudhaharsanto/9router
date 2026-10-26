@@ -108,23 +108,36 @@ export async function settleUsage(customerId, holdRefId, usageMicros, meta = {})
     );
     if (!hold) throw new Error(`No reserve_hold found for refId ${holdRefId}`);
     const heldMicros = Number((JSON.parse(hold.meta || "{}")).heldMicros || 0);
-    const newBalance = current.balanceMicros - usage;
-    const newReserved = Math.max(0, current.reservedMicros - heldMicros);
+    // A combo member can fail (releasing its hold) and the next member then settle
+    // the same refId. Releasing twice would eat another request's reserve, and
+    // charging twice would bill the customer twice — settle once per refId.
+    const settled = db.get(
+      `SELECT meta FROM ledger WHERE customerId = ? AND refType = 'request' AND refId = ? AND type = 'reserve_release' LIMIT 1`,
+      [customerId, holdRefId]
+    );
+    const alreadyCharged = settled && Number((JSON.parse(settled.meta || "{}")).chargedMicros || 0) > 0;
+    const billableMicros = alreadyCharged ? 0 : usage;
+    const newBalance = current.balanceMicros - billableMicros;
+    const newReserved = settled ? current.reservedMicros : Math.max(0, current.reservedMicros - heldMicros);
     db.run(
       `UPDATE customerBalances SET balanceMicros = ?, reservedMicros = ?, updatedAt = ? WHERE customerId = ?`,
       [newBalance, newReserved, nowIso(), customerId]
     );
-    if (usage > 0) {
+    if (billableMicros > 0) {
       appendLedger(db, {
-        customerId, type: "usage_debit", amountMicros: -usage,
+        customerId, type: "usage_debit", amountMicros: -billableMicros,
         balanceAfterMicros: newBalance, refType: "request", refId: holdRefId, meta,
       });
     }
-    appendLedger(db, {
-      customerId, type: "reserve_release", amountMicros: 0,
-      balanceAfterMicros: newBalance, refType: "request", refId: holdRefId,
-      meta: { releasedMicros: heldMicros, chargedMicros: usage },
-    });
+    // The release row is unique per (refType, refId, type): a hold already
+    // released by an earlier call must not append a second one.
+    if (!settled) {
+      appendLedger(db, {
+        customerId, type: "reserve_release", amountMicros: 0,
+        balanceAfterMicros: newBalance, refType: "request", refId: holdRefId,
+        meta: { releasedMicros: heldMicros, chargedMicros: billableMicros },
+      });
+    }
     return { balanceMicros: newBalance, reservedMicros: newReserved, availableMicros: newBalance - newReserved };
   });
 }

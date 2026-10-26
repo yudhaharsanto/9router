@@ -33,9 +33,12 @@ export async function authorizeCustomerRequest(apiKey) {
 // §3.8) and the next request is blocked once available <= 0.
 export async function holdForRequest(customerId, body, publicName = null) {
   const maxTokens = Math.max(0, Math.floor(Number(body?.max_tokens) || DEFAULT_MAX_TOKENS));
-  const model = String(body?.model || "");
-  const scopeModel = publicName || model;
-  const pricing = (publicName && await getPublicSellPricing(publicName)) || await getSellPricing("openai", model);
+  // Reserve off the public model's direct sell price — the customer's actual
+  // rate. No provider guess here: `body.model` is a public name (or a bare
+  // model), so a hardcoded provider lookup would size the reserve against the
+  // wrong row. An unpriced public model reserves at the top tier and settles
+  // against the served member's real price.
+  const pricing = publicName ? await getPublicSellPricing(publicName) : null;
   const outRate = pricing ? pricing.output : FALLBACK_OUTPUT_RATE;
   // max_tokens × rate/1M → micro-USD (rate per 1M × 1e6 µ$ = ×1 per token).
   const reserveMicros = Math.round(maxTokens * (outRate || FALLBACK_OUTPUT_RATE));

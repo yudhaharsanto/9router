@@ -1,4 +1,24 @@
+import { randomUUID } from "node:crypto";
 import { DefaultExecutor } from "./default.js";
+import { uuidFromSeed } from "../utils/sessionManager.js";
+
+// Last user turn as plain text — the message id has to change when the prompt
+// changes, otherwise a follow-up turn replays the previous message id.
+function lastUserText(body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role !== "user") continue;
+    if (typeof message.content === "string") return message.content;
+    if (Array.isArray(message.content)) {
+      return message.content
+        .map((part) => (typeof part === "string" ? part : part?.text || ""))
+        .join("");
+    }
+    return "";
+  }
+  return "";
+}
 
 /**
  * CodeBuddyIntlExecutor — talks to https://www.codebuddy.ai/v2/chat/completions
@@ -39,6 +59,24 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
 
     return transformed;
   }
+
+  // The IDE stamps a conversation UUID and a message UUID on every turn. Without
+  // them the gateway answers 403 11140 "request illegal" ("account restricted to
+  // unusual activity") even for a valid token. The conversation id is derived
+  // from the downstream session so every turn of one chat reuses it — a fresh
+  // random one per request is exactly the signal the anti-abuse gate flags.
+  buildHeaders(credentials, stream = true, url = null, model = null, body = null) {
+    const headers = super.buildHeaders(credentials, stream, url, model, body);
+    const conversationSeed =
+      credentials?._clientSessionId || credentials?.connectionId || credentials?.email || "anonymous";
+    headers["X-Conversation-ID"] = uuidFromSeed(`codebuddy:conversation:${conversationSeed}`);
+    headers["X-Conversation-Message-ID"] = uuidFromSeed(
+      `codebuddy:message:${conversationSeed}:${lastUserText(body)}`,
+    );
+    headers["X-Conversation-Request-ID"] = randomUUID();
+    return headers;
+  }
+
   parseError(response, bodyText) {
     if (bodyText) {
       try {

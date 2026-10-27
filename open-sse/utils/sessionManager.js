@@ -100,6 +100,23 @@ function sha16(text) {
     return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
+/**
+ * Deterministic UUID (v5 shape) from a seed.
+ *
+ * Upstreams that key a conversation on a UUID need the SAME id on every turn:
+ * a fresh random one per request reads as a brand-new conversation, which is
+ * what anti-abuse gates flag. Hashing also keeps a client-supplied session id
+ * from reaching upstream verbatim, and a UUID can never carry a header break.
+ */
+export function uuidFromSeed(seed) {
+    const bytes = crypto.createHash("sha256").update(String(seed || "9router")).digest().subarray(0, 16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+
 // Normalize a session id candidate (trim, length cap)
 function normalizeSessionId(value) {
     if (typeof value !== "string") return null;

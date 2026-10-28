@@ -24,7 +24,15 @@ const SPECIALIZED = new Set([
 ]);
 
 // Per-process / per-request values: kimi's random device name, minimax's session UUID.
-const VOLATILE_HEADERS = new Set(["x-msh-device-name", "x-mavis-session-id"]);
+const VOLATILE_HEADERS = new Set([
+  "x-msh-device-name",
+  "x-mavis-session-id",
+  // CodeBuddy channel-check ids: fresh random UUIDs on every buildHeaders call.
+  "x-request-id",
+  "x-conversation-id",
+  "x-conversation-request-id",
+  "x-conversation-message-id",
+]);
 
 // Machine/build-dependent values: pin them so the snapshot is identical on any
 // host (darwin vs linux, timezone, 9router version bump).

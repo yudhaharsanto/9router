@@ -50,3 +50,11 @@ tests/unit/headroom-responses-format.test.js :: skips unsafe openai-responses in
 # isolated in vitest), so a configured publicOrigin=https://… makes the plain-http case secure.
 tests/unit/customer-session.test.js :: cookie is secure when getPublicOrigin(request) is https
 
+
+# Same upstream test/code disagreement as the entry above (v0.5.112 ships the #2132 case,
+# which expects Responses tool/reasoning history to skip compression entirely).
+tests/unit/headroom-responses-format.test.js :: compressWithHeadroom openai-responses format (#1998) skips Responses tool/reasoning history instead of collapsing it into a message (#2132)
+
+# Environment-dependent: better-sqlite3 native bindings are absent in this checkout, so
+# backupDbLite cannot open a real DB (same class as db-benchmark below).
+tests/unit/request-details-tab.test.js :: backupDbLite — excludes requestDetails, keeps critical data backup file omits requestDetails rows but keeps other tables

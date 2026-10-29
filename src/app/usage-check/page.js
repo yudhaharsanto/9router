@@ -528,7 +528,7 @@ function CurrencySlide({ value, onChange, disabled }) {
   );
 }
 
-// ── Top up balance via Tako ──
+// ── Top up balance via ShopeePay gateway ──
 const TOPUP_AMOUNTS_IDR = [5_000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000];
 
 const TOPUP_STATUS_LABEL = {
@@ -544,23 +544,15 @@ function TopUpCard({ refreshBalance }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  // Pending payment { id, paymentUrl, amountIdr }. Tako's API exposes no QR
-  // payload or QR image — their QRIS renders only on the tako.id/pay page,
-  // which can't be iframed (X-Frame-Options: SAMEORIGIN) — so the Tako page
-  // opens in a popup window and this card polls the row until credited.
+  // Pending payment { id, paymentUrl, amountIdr }. The gateway's qris_url
+  // serves the QR image directly (/qr/:id, public), so it renders inline here
+  // and the card polls until credited — the gateway has no webhook.
   const [payment, setPayment] = useState(null);
   const [paid, setPaid] = useState(false);
   const [history, setHistory] = useState(null);
-  const popupRef = useRef(null);
 
-  const openPopup = (url) => {
-    const win = window.open(url || "", "qris-payment", "popup=yes,width=480,height=780");
-    popupRef.current = win;
-    if (win && !url) {
-      win.document.body.innerHTML =
-        '<p style="font-family:system-ui,sans-serif;padding:24px;color:#555">Opening QRIS payment…</p>';
-    }
-    return win;
+  const openQris = (url) => {
+    if (url) window.open(url, "qris-payment", "popup=yes,width=480,height=780");
   };
 
   // Preset click clears the free-form field; typing in it clears the preset.
@@ -594,8 +586,6 @@ function TopUpCard({ refreshBalance }) {
     setError("");
     setNotice("");
     setPaid(false);
-    // Open synchronously inside the click gesture so popup blockers allow it.
-    const win = openPopup();
     try {
       const res = await fetch("/api/customer/topup", {
         method: "POST",
@@ -604,12 +594,10 @@ function TopUpCard({ refreshBalance }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        win?.close();
         setError(data.error || `Failed (${res.status})`);
       } else if (data.manual) {
         // No online payment configured server-side; the request is recorded
         // pending and the customer contacts the admin to settle it.
-        win?.close();
         setNotice(data.message || "Top-up recorded. Contact the admin to settle it.");
         setAmount(amountIdr);
         loadHistory();
@@ -617,36 +605,33 @@ function TopUpCard({ refreshBalance }) {
         const t = data.topup || {};
         setPayment({ id: t.id ?? null, paymentUrl: t.paymentUrl || null, amountIdr });
         setAmount(amountIdr);
-        if (win && t.paymentUrl) win.location.replace(t.paymentUrl);
-        else win?.close();
         loadHistory();
       }
     } catch (err) {
-      win?.close();
       setError(String(err?.message || err));
     } finally {
       setBusy(false);
     }
   };
 
-  // Poll while a payment is pending: the Tako webhook (or reconciliation)
-  // credits the balance server-side, we just reflect it here.
+  // Poll while a payment is pending: the server re-checks the gateway
+  // (?sync=1), credits the balance, and we just reflect it here. 10s matches
+  // the gateway's own guidance — it scans ShopeePay on each check.
   useEffect(() => {
     if (!payment?.id || paid) return;
     let cancelled = false;
     const iv = setInterval(async () => {
       try {
-        const r = await fetch("/api/customer/topups?limit=10", { headers: { "Cache-Control": "no-store" } });
+        const r = await fetch("/api/customer/topups?limit=10&sync=1", { headers: { "Cache-Control": "no-store" } });
         const d = r.ok ? await r.json() : {};
         const row = (d.items || []).find((t) => t.id === payment.id);
         if (!cancelled && row?.status === "paid") {
           setPaid(true);
-          popupRef.current?.close();
           loadHistory();
           refreshBalance?.();
         }
       } catch {}
-    }, 4000);
+    }, 10000);
     return () => {
       cancelled = true;
       clearInterval(iv);
@@ -704,16 +689,23 @@ function TopUpCard({ refreshBalance }) {
         </p>
       )}
       {payment && !paid && (
-        <div className="rounded-[10px] border border-border-subtle bg-surface-2 p-3 flex flex-col gap-2">
+        <div className="rounded-[10px] border border-border-subtle bg-surface-2 p-3 flex flex-col gap-2 items-center">
           <span className="text-xs font-medium">
             Waiting for payment · Rp {(payment.amountIdr || 0).toLocaleString("id-ID")}
           </span>
-          <span className="text-[11px] text-text-muted">
-            Scan the QRIS in the payment window. This page updates automatically once paid.
+          {payment.paymentUrl && (
+            <img
+              src={payment.paymentUrl}
+              alt="QRIS payment code"
+              className="w-48 h-48 rounded-[10px] bg-white p-2"
+            />
+          )}
+          <span className="text-[11px] text-text-muted text-center">
+            Scan with any QRIS-enabled app. This page updates automatically once paid.
           </span>
           {payment.paymentUrl && (
-            <Button variant="outline" size="sm" className="self-start" icon="qr_code_2" onClick={() => openPopup(payment.paymentUrl)}>
-              Open QRIS window
+            <Button variant="outline" size="sm" className="self-start" icon="qr_code_2" onClick={() => openQris(payment.paymentUrl)}>
+              Open QR in new window
             </Button>
           )}
         </div>
@@ -724,11 +716,18 @@ function TopUpCard({ refreshBalance }) {
           <div className="text-[11px] font-medium text-text-muted mb-1.5">Recent top-ups</div>
           <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
             {history.map((t) => (
-              <li key={t.id} className="flex items-center justify-between text-xs">
-                <span className="text-text-main tabular-nums">
-                  Rp {Number(t.amountIdr).toLocaleString("id-ID")}
+              <li key={t.id} className="flex items-start justify-between gap-2 text-xs">
+                <span className="flex flex-col">
+                  <span className="text-text-main tabular-nums">
+                    Rp {Number(t.amountIdr).toLocaleString("id-ID")}
+                  </span>
+                  <span className="text-[10px] text-text-muted">
+                    {t.paidAt
+                      ? `Paid ${new Date(t.paidAt).toLocaleString()}`
+                      : `Created ${new Date(t.createdAt).toLocaleString()}`}
+                  </span>
                 </span>
-                <span className="text-text-muted tabular-nums">
+                <span className="text-text-muted tabular-nums text-right">
                   +{fmtMoney(t.creditedMicros)} · {TOPUP_STATUS_LABEL[t.status] || t.status}
                 </span>
               </li>

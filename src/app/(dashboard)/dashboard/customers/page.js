@@ -104,7 +104,7 @@ export default function CustomersPage() {
   // Admin billing tools (phase 7)
   const [reconResult, setReconResult] = useState(null);
   const [reconBusy, setReconBusy] = useState(false);
-  const [settings, setSettings] = useState({ discountRate: 0.5, minMarginPct: 0, marginBehavior: "skip", idrPerUsd: "", takoUsername: "", takoMerchantKey: "", takoCallbackSecret: "", takoCallbackConfigured: false, takoMerchantConfigured: false });
+  const [settings, setSettings] = useState({ discountRate: 0.5, minMarginPct: 0, marginBehavior: "skip", idrPerUsd: "", shoppepayBaseUrl: "", shoppepayApiKey: "", shoppepayConfigured: false });
   const [settingsSaved, setSettingsSaved] = useState(false);
   // Read-only view of what customers are billed: official catalog price × (1 − discountRate).
   const [pricing, setPricing] = useState(null);
@@ -144,11 +144,9 @@ export default function CustomersPage() {
               minMarginPct: s.minMarginPct ?? 0,
               marginBehavior: s.marginBehavior || "skip",
               idrPerUsd: s.idrPerUsd || "",
-              takoUsername: s.takoUsername || "",
-              takoMerchantKey: "",
-              takoCallbackSecret: "",
-              takoMerchantConfigured: !!s.takoMerchantConfigured,
-              takoCallbackConfigured: !!s.takoCallbackConfigured,
+              shoppepayBaseUrl: s.shoppepayBaseUrl || "",
+              shoppepayApiKey: "",
+              shoppepayConfigured: !!s.shoppepayConfigured,
             });
           }
         }
@@ -273,7 +271,7 @@ export default function CustomersPage() {
     setReconBusy(true);
     setReconResult(null);
     try {
-      const res = await fetch("/api/admin/reconciliation/tako", { cache: "no-store" });
+      const res = await fetch("/api/admin/reconciliation/shoppepay", { cache: "no-store" });
       const body = await res.json();
       setReconResult(res.ok ? body : { error: body.error || `HTTP ${res.status}` });
     } catch (e) {
@@ -387,9 +385,8 @@ export default function CustomersPage() {
           minMarginPct: Number(settings.minMarginPct),
           marginBehavior: settings.marginBehavior,
           idrPerUsd: settings.idrPerUsd,
-          takoUsername: settings.takoUsername,
-          ...(settings.takoMerchantKey.trim() ? { takoMerchantKey: settings.takoMerchantKey.trim() } : {}),
-          ...(settings.takoCallbackSecret.trim() ? { takoCallbackSecret: settings.takoCallbackSecret.trim() } : {}),
+          shoppepayBaseUrl: settings.shoppepayBaseUrl,
+          ...(settings.shoppepayApiKey.trim() ? { shoppepayApiKey: settings.shoppepayApiKey.trim() } : {}),
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -625,33 +622,23 @@ export default function CustomersPage() {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-text-muted">Tako username</span>
+            <span className="text-text-muted">ShopeePay gateway URL</span>
             <input
               type="text"
-              value={settings.takoUsername}
-              onChange={(e) => setSettings((s) => ({ ...s, takoUsername: e.target.value }))}
+              value={settings.shoppepayBaseUrl}
+              onChange={(e) => setSettings((s) => ({ ...s, shoppepayBaseUrl: e.target.value }))}
+              placeholder="https://shoppepay.pecuttai.my.id"
               className="rounded-md border border-border bg-bg-subtle px-3 py-2"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-text-muted">
-              Tako merchant key {settings.takoMerchantConfigured ? <span className="text-green-600">(configured)</span> : <span className="text-amber-600">(not set — manual top-up only)</span>}
+              ShopeePay API key {settings.shoppepayConfigured ? <span className="text-green-600">(configured)</span> : <span className="text-amber-600">(not set — manual top-up only)</span>}
             </span>
             <input
-              type="password" autoComplete="new-password" placeholder={settings.takoMerchantConfigured ? "•••••••• (saved)" : ""}
-              value={settings.takoMerchantKey}
-              onChange={(e) => setSettings((s) => ({ ...s, takoMerchantKey: e.target.value }))}
-              className="rounded-md border border-border bg-bg-subtle px-3 py-2"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-text-muted">
-              Tako callback secret {settings.takoCallbackConfigured ? <span className="text-green-600">(configured)</span> : <span className="text-amber-600">(not set — webhook unsigned)</span>}
-            </span>
-            <input
-              type="password" autoComplete="new-password" placeholder={settings.takoCallbackConfigured ? "•••••••• (saved)" : ""}
-              value={settings.takoCallbackSecret}
-              onChange={(e) => setSettings((s) => ({ ...s, takoCallbackSecret: e.target.value }))}
+              type="password" autoComplete="new-password" placeholder={settings.shoppepayConfigured ? "•••••••• (saved)" : ""}
+              value={settings.shoppepayApiKey}
+              onChange={(e) => setSettings((s) => ({ ...s, shoppepayApiKey: e.target.value }))}
               className="rounded-md border border-border bg-bg-subtle px-3 py-2"
             />
           </label>
@@ -933,7 +920,7 @@ export default function CustomersPage() {
       {/* Package holders — every customer instance across statuses */}
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-border bg-bg-subtle/50">
-          <h3 className="font-semibold">Tako Reconciliation</h3>
+          <h3 className="font-semibold">ShopeePay Reconciliation</h3>
           <button
             onClick={runReconciliation}
             disabled={reconBusy}
@@ -953,7 +940,7 @@ export default function CustomersPage() {
             )
           ) : (
             <span className="text-text-muted">
-              Sweeps stuck pending Tako topups (older than 5 minutes) against the Tako API and credits paid ones.
+              Sweeps pending ShopeePay topups (created in the last 30 minutes) against the gateway and credits paid ones.
             </span>
           )}
         </div>

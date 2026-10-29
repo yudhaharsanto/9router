@@ -40,12 +40,11 @@ const DEFAULT_SETTINGS = {
   // Drives Google OAuth redirect_uri and secure-cookie decisions without env.
   // Empty = fall back to BASE_URL env / trusted request host / localhost.
   publicOrigin: "",
-  // Customer billing (phase 4): Tako top-up + FX rate. takoMerchantKey is the
-  // Tako API key (write-only: never returned by GET /api/settings; the portal
-  // shows only a "configured" flag).
-  takoUsername: "",
-  takoCallbackSecret: "",
-  takoMerchantKey: "",
+  // Customer billing: ShopeePay gateway top-up + FX rate. shoppepayApiKey is
+  // the gateway's X-API-Key (write-only: never returned by GET /api/settings;
+  // the portal shows only a "configured" flag).
+  shoppepayBaseUrl: "https://shoppepay.pecuttai.my.id",
+  shoppepayApiKey: "",
   // Daily FX snapshot: IDR per USD. Empty = top-up creation blocked (no guessing).
   idrPerUsd: "",
   // Customer sell price = official × (1 − discountRate). 0.5 = half price.

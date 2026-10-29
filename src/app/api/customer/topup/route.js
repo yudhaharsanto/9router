@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/auth/customerSession.js";
-import { createTopup, setTopupPayment, computeCreditedMicros } from "@/lib/db/repos/topupsRepo.js";
+import { createTopup, setTopupPaymentUrl } from "@/lib/db/repos/topupsRepo.js";
 import { getSettings } from "@/lib/db/repos/settingsRepo.js";
-import { getCustomerById } from "@/lib/db/repos/customersRepo.js";
+import { shoppepayConfig, createQris } from "@/lib/billing/shoppepay.js";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/customer/topup { amountIdr } — session-gated Tako top-up creation
-// (spec §3.3). Rate snapshot comes from settings (idrPerUsd); without a valid
-// rate creation is blocked — never guess. The merchant key is server-only.
+// POST /api/customer/topup { amountIdr } — session-gated top-up creation.
+// Rate snapshot comes from settings (idrPerUsd); without a valid rate creation
+// is blocked — never guess. The gateway API key is server-only.
 //
-// Tako gift API (docs: tako.id/api-docs#mengirim-hadiah): a "gift" is a payment
-// request to the merchant account — the customer pays the merchant's QRIS, and
-// the payment.success callback (or reconciliation) credits the topup row.
-// QRIS is the only method the API offers here; balance payment is not
-// available to API keys.
-const TAKO_GIFT_URL = (username) => `https://tako.id/api/v1/gift/${encodeURIComponent(username)}`;
-
+// The ShopeePay gateway mints a dynamic QRIS for the amount; the payment is
+// confirmed later by polling (no webhook exists), see shoppepayReconcile.js.
 export async function POST(request) {
   const session = await requireCustomerSession(request);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,20 +35,14 @@ export async function POST(request) {
   }
   const rateMilli = Math.round(ratePerUsd * 1000);
 
-  const customer = await getCustomerById(session.customerId);
-
   // Rate snapshot is locked at creation; the credit amount is precomputed and
-  // later rate changes never re-write it (spec §3.4).
+  // later rate changes never re-write it.
   const topup = await createTopup({ customerId: session.customerId, amountIdr, rateMilli });
 
-  const username = (settings.takoUsername || "").trim();
-  // Merchant key lives in settings (set from the admin dashboard); the env var
-  // is the legacy/override path. Settings value wins when both exist.
-  const merchantKey = (settings.takoMerchantKey || process.env.TAKO_MERCHANT_KEY || "").trim();
-  if (!username || !merchantKey) {
-    // Manual mode: the row stays pending so the request is auditable; an
-    // admin credits it via balance adjustment (or the Tako webhook if a key
-    // is configured later). Nothing payment-secret is exposed here.
+  const config = await shoppepayConfig();
+  if (!config) {
+    // Manual mode: the row stays pending so the request is auditable; an admin
+    // credits it via balance adjustment. Nothing payment-secret is exposed.
     return NextResponse.json({
       topup,
       manual: true,
@@ -62,36 +51,9 @@ export async function POST(request) {
   }
 
   try {
-    const res = await fetch(TAKO_GIFT_URL(username), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${merchantKey}`,
-        "Content-Type": "application/json",
-        "User-Agent": "9router/1.0",
-      },
-      body: JSON.stringify({
-        // Gift fields (docs): sender identity + amount + method.
-        name: customer?.name || customer?.email?.split("@")[0] || "9Router customer",
-        email: customer?.email || undefined,
-        amount: amountIdr,
-        paymentMethod: "qris",
-        // echo our row id so callbacks/reconciliation can be correlated
-        message: `9router topup ${topup.id}`,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const data = await res.json().catch(() => ({}));
-    const result = data?.result || data;
-    if (!res.ok || !result?.transactionId) {
-      throw new Error(`tako responded ${res.status}`);
-    }
-    await setTopupPayment(topup.id, {
-      takoTxnId: String(result.transactionId),
-      paymentUrl: result.paymentUrl ? String(result.paymentUrl) : null,
-    });
-    return NextResponse.json({
-      topup: { ...topup, takoTxnId: String(result.transactionId), paymentUrl: result.paymentUrl || null },
-    });
+    const { qrisUrl } = await createQris(config, amountIdr);
+    await setTopupPaymentUrl(topup.id, qrisUrl);
+    return NextResponse.json({ topup: { ...topup, paymentUrl: qrisUrl } });
   } catch (err) {
     return NextResponse.json(
       { error: "Payment provider unavailable, please try again", detail: String(err?.message || err) },

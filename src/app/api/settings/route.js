@@ -17,10 +17,12 @@ const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
 export async function GET() {
   try {
     const settings = await getSettings();
-    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
+    // Secrets never leave the server. tako* are legacy rows from before the
+    // ShopeePay switch — still filtered so old installs can't leak them.
+    const { password, oidcClientSecret, googleOAuthClientSecret, shoppepayApiKey, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     safeSettings.googleOAuthConfigured = !!(safeSettings.googleOAuthClientId && googleOAuthClientSecret);
-    safeSettings.takoCallbackConfigured = !!takoCallbackSecret;
+    safeSettings.shoppepayConfigured = !!String(shoppepayApiKey || "").trim();
 
     const enableRequestLogs = process.env.ENABLE_REQUEST_LOGS === "true";
     const enableTranslator = process.env.ENABLE_TRANSLATOR === "true";
@@ -84,15 +86,9 @@ export async function PATCH(request) {
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, "takoCallbackSecret")) {
-      if (!body.takoCallbackSecret || !String(body.takoCallbackSecret).trim()) {
-        delete body.takoCallbackSecret;
-      }
-    }
-
-    if (Object.prototype.hasOwnProperty.call(body, "takoMerchantKey")) {
-      if (!body.takoMerchantKey || !String(body.takoMerchantKey).trim()) {
-        delete body.takoMerchantKey;
+    if (Object.prototype.hasOwnProperty.call(body, "shoppepayApiKey")) {
+      if (!body.shoppepayApiKey || !String(body.shoppepayApiKey).trim()) {
+        delete body.shoppepayApiKey;
       }
     }
 
@@ -128,11 +124,10 @@ export async function PATCH(request) {
         .catch((error) => console.warn("[AutoPing] settings update failed:", error.message));
     }
 
-    const { password, oidcClientSecret, googleOAuthClientSecret, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
+    const { password, oidcClientSecret, googleOAuthClientSecret, shoppepayApiKey, takoCallbackSecret, takoMerchantKey, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     safeSettings.googleOAuthConfigured = !!(safeSettings.googleOAuthClientId && googleOAuthClientSecret);
-    safeSettings.takoCallbackConfigured = !!takoCallbackSecret;
-    safeSettings.takoMerchantConfigured = !!takoMerchantKey;
+    safeSettings.shoppepayConfigured = !!String(shoppepayApiKey || "").trim();
     return NextResponse.json(safeSettings, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);

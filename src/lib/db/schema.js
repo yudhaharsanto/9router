@@ -239,8 +239,10 @@ export const TABLES = {
     columns: {
       id: "TEXT PRIMARY KEY",
       customerId: "TEXT NOT NULL",
-      // Tako transaction id; NULL until callback/paymentUrl known. UNIQUE = idempotency anchor.
-      takoTxnId: "TEXT UNIQUE",
+      // ShopeePay gateway transaction id; NULL until the poller claims a
+      // matching payment. UNIQUE = idempotency anchor (and collision guard
+      // between two topups of equal amount).
+      providerTxnId: "TEXT UNIQUE",
       amountIdr: "INTEGER NOT NULL",
       // FX rate snapshot at creation: milli-IDR per USD (rate × 1000).
       rateMilli: "INTEGER NOT NULL",
@@ -260,7 +262,8 @@ export const TABLES = {
   webhookEvents: {
     columns: {
       id: "TEXT PRIMARY KEY",
-      // "tako" for now.
+      // Provider name of the webhook source (unused since the ShopeePay
+      // gateway has no callbacks; kept for future providers).
       source: "TEXT NOT NULL",
       // Provider transaction/event id. Duplicate delivery → INSERT ignored.
       externalId: "TEXT NOT NULL",

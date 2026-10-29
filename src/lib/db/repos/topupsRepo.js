@@ -13,7 +13,7 @@ function rowToTopup(row) {
   return {
     id: row.id,
     customerId: row.customerId,
-    takoTxnId: row.takoTxnId || null,
+    providerTxnId: row.providerTxnId || null,
     amountIdr: Number(row.amountIdr),
     rateMilli: Number(row.rateMilli),
     creditedMicros: row.creditedMicros == null ? null : Number(row.creditedMicros),
@@ -31,26 +31,46 @@ export async function createTopup({ customerId, amountIdr, rateMilli }) {
   const db = await getAdapter();
   const now = new Date().toISOString();
   const topup = {
-    id: uuidv4(), customerId, takoTxnId: null,
+    id: uuidv4(), customerId, providerTxnId: null,
     amountIdr, rateMilli, creditedMicros,
     status: "pending", paymentUrl: null, paidAt: null,
     createdAt: now, updatedAt: now,
   };
   db.run(
-    `INSERT INTO topups(id, customerId, takoTxnId, amountIdr, rateMilli, creditedMicros, status, paymentUrl, paidAt, createdAt, updatedAt)
+    `INSERT INTO topups(id, customerId, providerTxnId, amountIdr, rateMilli, creditedMicros, status, paymentUrl, paidAt, createdAt, updatedAt)
      VALUES(?, ?, NULL, ?, ?, ?, 'pending', NULL, NULL, ?, ?)`,
     [topup.id, topup.customerId, topup.amountIdr, topup.rateMilli, topup.creditedMicros, topup.createdAt, topup.updatedAt]
   );
   return topup;
 }
 
-export async function setTopupPayment(id, { takoTxnId, paymentUrl }) {
-  if (!takoTxnId) throw new Error("takoTxnId is required");
+// The QRIS URL is known at creation; the provider transaction id is not (the
+// gateway has no callback — it is discovered later by polling).
+export async function setTopupPaymentUrl(id, paymentUrl) {
   const db = await getAdapter();
   db.run(
-    `UPDATE topups SET takoTxnId = ?, paymentUrl = COALESCE(?, paymentUrl), updatedAt = ? WHERE id = ?`,
-    [takoTxnId, paymentUrl || null, new Date().toISOString(), id]
+    `UPDATE topups SET paymentUrl = ?, updatedAt = ? WHERE id = ?`,
+    [paymentUrl || null, new Date().toISOString(), id]
   );
+}
+
+// Claim a provider transaction for a topup. The UNIQUE index on providerTxnId
+// is the collision guard: two pending topups with the same amount can both see
+// the same incoming payment, but only the first claim wins — the second stays
+// pending instead of double-crediting.
+export async function claimTopupTransaction(id, providerTxnId) {
+  if (!providerTxnId) return false;
+  const db = await getAdapter();
+  try {
+    db.run(
+      `UPDATE topups SET providerTxnId = ?, updatedAt = ? WHERE id = ? AND providerTxnId IS NULL`,
+      [providerTxnId, new Date().toISOString(), id]
+    );
+  } catch {
+    return false; // UNIQUE violation: another topup already owns this payment
+  }
+  const row = db.get(`SELECT providerTxnId FROM topups WHERE id = ?`, [id]);
+  return row?.providerTxnId === providerTxnId;
 }
 
 export async function getTopupById(id) {
@@ -58,9 +78,22 @@ export async function getTopupById(id) {
   return rowToTopup(db.get(`SELECT * FROM topups WHERE id = ?`, [id]));
 }
 
-export async function getTopupByTakoTxnId(takoTxnId) {
+export async function getTopupByProviderTxnId(providerTxnId) {
   const db = await getAdapter();
-  return rowToTopup(db.get(`SELECT * FROM topups WHERE takoTxnId = ?`, [takoTxnId]));
+  return rowToTopup(db.get(`SELECT * FROM topups WHERE providerTxnId = ?`, [providerTxnId]));
+}
+
+// Pending topups that still have a live QR and were created inside the poll
+// window. Older rows are never auto-credited: /check-payment matches by amount
+// only, so a wide window could claim an unrelated payment of the same amount.
+export async function listPendingTopups({ customerId = null, sinceIso, limit = 20 }) {
+  const db = await getAdapter();
+  const lim = Math.min(Math.max(1, Number(limit) || 20), 100);
+  const where = `status = 'pending' AND paymentUrl IS NOT NULL AND createdAt >= ?`;
+  const rows = customerId
+    ? db.all(`SELECT * FROM topups WHERE ${where} AND customerId = ? ORDER BY createdAt ASC LIMIT ${lim}`, [sinceIso, customerId])
+    : db.all(`SELECT * FROM topups WHERE ${where} ORDER BY createdAt ASC LIMIT ${lim}`, [sinceIso]);
+  return rows.map(rowToTopup);
 }
 
 export async function listTopups(customerId, { limit = 50 } = {}) {
@@ -70,29 +103,29 @@ export async function listTopups(customerId, { limit = 50 } = {}) {
     .map(rowToTopup);
 }
 
-export async function markTopupPaid(takoTxnId) {
+export async function markTopupPaid(providerTxnId) {
   const db = await getAdapter();
   db.run(
-    `UPDATE topups SET status = 'paid', paidAt = COALESCE(paidAt, ?), updatedAt = ? WHERE takoTxnId = ?`,
-    [new Date().toISOString(), new Date().toISOString(), takoTxnId]
+    `UPDATE topups SET status = 'paid', paidAt = COALESCE(paidAt, ?), updatedAt = ? WHERE providerTxnId = ?`,
+    [new Date().toISOString(), new Date().toISOString(), providerTxnId]
   );
-  return getTopupByTakoTxnId(takoTxnId);
+  return getTopupByProviderTxnId(providerTxnId);
 }
 
-// The single credit path for the Tako webhook handler. Guard on status keeps
-// replays out; the ledger's unique (refType, refId, type) guards even a
-// concurrent double-apply (second creditCustomer becomes a no-op).
-export async function applyTopupCredit(takoTxnId) {
+// The single credit path for the ShopeePay poller (and the admin sweep). Guard
+// on status keeps replays out; the ledger's unique (refType, refId, type)
+// guards even a concurrent double-apply (second creditCustomer is a no-op).
+export async function applyTopupCredit(providerTxnId) {
   const { creditCustomer } = await import("./ledgerRepo.js");
-  const topup = await getTopupByTakoTxnId(takoTxnId);
+  const topup = await getTopupByProviderTxnId(providerTxnId);
   if (!topup) return { credited: false, reason: "not-found" };
   if (topup.status !== "pending") return { credited: false, reason: "already-processed" };
   if (topup.creditedMicros == null) return { credited: false, reason: "no-credited-amount" };
   await creditCustomer(topup.customerId, topup.creditedMicros, {
     refType: "topup",
     refId: topup.id,
-    meta: { takoTxnId, amountIdr: topup.amountIdr, rateMilli: topup.rateMilli },
+    meta: { providerTxnId, amountIdr: topup.amountIdr, rateMilli: topup.rateMilli },
   });
-  await markTopupPaid(takoTxnId);
-  return { credited: true, topup: await getTopupByTakoTxnId(takoTxnId) };
+  await markTopupPaid(providerTxnId);
+  return { credited: true, topup: await getTopupByProviderTxnId(providerTxnId) };
 }

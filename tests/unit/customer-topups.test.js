@@ -33,13 +33,23 @@ describe("topupsRepo", () => {
     expect(t.creditedMicros).toBe(Math.round((100_000 * 1_000_000_000) / RATE_MILLI)); // 5_882_353 µ$ ≈ $5.882353
   });
 
-  it("setTopupPayment links takoTxnId + paymentUrl", async () => {
+  it("setTopupPaymentUrl + claimTopupTransaction link the provider txn", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "top-2" });
     const t = await db.createTopup({ customerId: c.id, amountIdr: 50_000, rateMilli: RATE_MILLI });
-    await db.setTopupPayment(t.id, { takoTxnId: "tako-txn-2", paymentUrl: "https://tako.id/pay/x" });
-    const got = await db.getTopupByTakoTxnId("tako-txn-2");
+    await db.setTopupPaymentUrl(t.id, "https://gw.test/qr/x");
+    expect(await db.claimTopupTransaction(t.id, "sp-txn-2")).toBe(true);
+    const got = await db.getTopupByProviderTxnId("sp-txn-2");
     expect(got.id).toBe(t.id);
-    expect(got.paymentUrl).toBe("https://tako.id/pay/x");
+    expect(got.paymentUrl).toBe("https://gw.test/qr/x");
+  });
+
+  it("claimTopupTransaction is first-come: a second topup cannot take the same payment", async () => {
+    const c = await db.getOrCreateCustomer({ googleSub: "top-2b" });
+    const a = await db.createTopup({ customerId: c.id, amountIdr: 50_000, rateMilli: RATE_MILLI });
+    const b = await db.createTopup({ customerId: c.id, amountIdr: 50_000, rateMilli: RATE_MILLI });
+    expect(await db.claimTopupTransaction(a.id, "sp-txn-shared")).toBe(true);
+    expect(await db.claimTopupTransaction(b.id, "sp-txn-shared")).toBe(false);
+    expect((await db.getTopupById(b.id)).providerTxnId).toBeNull();
   });
 
   it("listTopups returns newest first", async () => {
@@ -92,16 +102,17 @@ describe("webhookEventsRepo", () => {
   });
 });
 
-describe("applyTopupCredit — the webhook handler's single entry", () => {
+describe("applyTopupCredit — the poller's single entry", () => {
   it("credits balance, marks paid, writes ledger row — once", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "top-4" });
     const t = await db.createTopup({ customerId: c.id, amountIdr: 100_000, rateMilli: RATE_MILLI });
-    await db.setTopupPayment(t.id, { takoTxnId: "tako-txn-4", paymentUrl: "u" });
-    const r1 = await db.applyTopupCredit("tako-txn-4");
+    await db.setTopupPaymentUrl(t.id, "u");
+    await db.claimTopupTransaction(t.id, "sp-txn-4");
+    const r1 = await db.applyTopupCredit("sp-txn-4");
     expect(r1.credited).toBe(true);
     const bal = await db.getBalance(c.id);
     expect(bal.balanceMicros).toBe(t.creditedMicros);
-    const again = await db.applyTopupCredit("tako-txn-4");
+    const again = await db.applyTopupCredit("sp-txn-4");
     expect(again.credited).toBe(false);
     expect(again.reason).toBe("already-processed");
     const bal2 = await db.getBalance(c.id);
@@ -118,10 +129,11 @@ describe("applyTopupCredit — the webhook handler's single entry", () => {
   it("paid topup re-delivered → no double credit", async () => {
     const c = await db.getOrCreateCustomer({ googleSub: "top-5" });
     const t = await db.createTopup({ customerId: c.id, amountIdr: 10_000, rateMilli: RATE_MILLI });
-    await db.setTopupPayment(t.id, { takoTxnId: "tako-txn-5", paymentUrl: "u" });
-    await db.applyTopupCredit("tako-txn-5");
-    // Simulate concurrent webhook replay racing the first apply:
-    const r = await db.applyTopupCredit("tako-txn-5");
+    await db.setTopupPaymentUrl(t.id, "u");
+    await db.claimTopupTransaction(t.id, "sp-txn-5");
+    await db.applyTopupCredit("sp-txn-5");
+    // Simulate a second poll racing the first apply:
+    const r = await db.applyTopupCredit("sp-txn-5");
     expect(r.credited).toBe(false);
     expect((await db.getBalance(c.id)).balanceMicros).toBe(t.creditedMicros);
   });

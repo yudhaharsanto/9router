@@ -39,13 +39,13 @@ describe("Customer billing schema", () => {
     expect(tables).toEqual(expect.arrayContaining(CUSTOMER_TABLES));
   });
 
-  it("unique constraints exist: customers.googleSub, customerKeys.keyHash, topups.takoTxnId, webhookEvents source+externalId, ledger refType+refId+type", async () => {
+  it("unique constraints exist: customers.googleSub, customerKeys.keyHash, topups.providerTxnId, webhookEvents source+externalId, ledger refType+refId+type", async () => {
     const db = await freshDb();
     const sql = (name) =>
       db.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, [name])?.sql || "";
     expect(sql("customers")).toMatch(/"?googleSub"? TEXT UNIQUE NOT NULL/);
     expect(sql("customerKeys")).toMatch(/"?keyHash"? TEXT UNIQUE NOT NULL/);
-    expect(sql("topups")).toMatch(/"?takoTxnId"? TEXT UNIQUE/);
+    expect(sql("topups")).toMatch(/"?providerTxnId"? TEXT UNIQUE/);
     // SQLite stores named unique indexes separately from CREATE TABLE.
     const indexSql = db
       .all(`SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL`)

@@ -65,8 +65,8 @@ export {
   getBalance, creditCustomer, holdReserve, settleUsage, adjustBalance, getLedger, MICROS_PER_USD,
 } from "./repos/ledgerRepo.js";
 export {
-  createTopup, setTopupPayment, getTopupById, getTopupByTakoTxnId,
-  listTopups, markTopupPaid, applyTopupCredit, computeCreditedMicros,
+  createTopup, setTopupPaymentUrl, claimTopupTransaction, getTopupById, getTopupByProviderTxnId,
+  listTopups, listPendingTopups, markTopupPaid, applyTopupCredit, computeCreditedMicros,
 } from "./repos/topupsRepo.js";
 export {
   recordWebhookEvent, markWebhookProcessed, getUnprocessedWebhookEvents,
@@ -230,9 +230,11 @@ export async function importDb(payload) {
       );
     }
     for (const t of payload.topups || []) {
+      // Backups taken before the ShopeePay migration still name this takoTxnId.
+      const txnId = t.providerTxnId || t.takoTxnId || null;
       db.run(
-        `INSERT OR REPLACE INTO topups(id, customerId, takoTxnId, amountIdr, rateMilli, creditedMicros, status, paymentUrl, paidAt, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [t.id, t.customerId, t.takoTxnId || null, t.amountIdr, t.rateMilli, t.creditedMicros == null ? null : t.creditedMicros, t.status || "pending", t.paymentUrl || null, t.paidAt || null, t.createdAt, t.updatedAt || t.createdAt]
+        `INSERT OR REPLACE INTO topups(id, customerId, providerTxnId, amountIdr, rateMilli, creditedMicros, status, paymentUrl, paidAt, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [t.id, t.customerId, txnId, t.amountIdr, t.rateMilli, t.creditedMicros == null ? null : t.creditedMicros, t.status || "pending", t.paymentUrl || null, t.paidAt || null, t.createdAt, t.updatedAt || t.createdAt]
       );
     }
     for (const w of payload.webhookEvents || []) {

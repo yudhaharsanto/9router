@@ -1,4 +1,4 @@
-// GET /api/admin/reconciliation/tako — admin-only, runs runTakoReconciliation.
+// GET /api/admin/reconciliation/shoppepay — admin-only, runs syncPendingTopups.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,22 +30,22 @@ afterAll(() => {
 });
 
 function req() {
-  return new Request("http://localhost:20128/api/admin/reconciliation/tako", {
+  return new Request("http://localhost:20128/api/admin/reconciliation/shoppepay", {
     headers: adminToken ? { cookie: `auth_token=${adminToken}` } : {},
   });
 }
 
-describe("GET /api/admin/reconciliation/tako", () => {
+describe("GET /api/admin/reconciliation/shoppepay", () => {
   it("401 without an admin session", async () => {
     process.env.ADMIN_AUTH_BYPASS = "";
-    const mod = await import("@/app/api/admin/reconciliation/tako/route.js");
-    const anon = new Request("http://localhost:20128/api/admin/reconciliation/tako");
+    const mod = await import("@/app/api/admin/reconciliation/shoppepay/route.js");
+    const anon = new Request("http://localhost:20128/api/admin/reconciliation/shoppepay");
     const res = await mod.GET(anon);
     expect([401, 403]).toContain(res.status);
   });
 
   it("returns reconciliation summary for an admin", async () => {
-    const mod = await import("@/app/api/admin/reconciliation/tako/route.js");
+    const mod = await import("@/app/api/admin/reconciliation/shoppepay/route.js");
     const res = await mod.GET(req());
     expect(res.status).toBe(200);
     const body = await res.json();
